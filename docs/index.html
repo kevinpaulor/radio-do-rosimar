@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rádio do Rosimar</title>
+<meta name="theme-color" content="#14532d">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root { --verde:#16a34a; --verde-esc:#14532d; --verm:#dc2626; --fundo:#f7f5ef; --texto:#111; --cinza:#555; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; background:var(--fundo); color:var(--texto);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { display:flex; flex-direction:column; min-height:100dvh; }
+  header { background:var(--verde-esc); color:#fff; padding:14px 18px calc(14px) ; padding-top:max(14px, env(safe-area-inset-top));
+    display:flex; align-items:center; justify-content:space-between; }
+  header h1 { margin:0; font-size:22px; letter-spacing:.5px; }
+  #quem { font-size:15px; opacity:.85; }
+  main { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:18px; gap:18px; text-align:center; }
+  .tela { display:none; width:100%; max-width:520px; flex-direction:column; align-items:center; gap:18px; }
+  .tela.ativa { display:flex; }
+  .grande { font-size:30px; font-weight:800; line-height:1.2; margin:0; }
+  .media { font-size:22px; line-height:1.35; margin:0; color:var(--cinza); }
+  #btnFalar { width:min(72vw,300px); height:min(72vw,300px); border-radius:50%; border:none; background:var(--verde); color:#fff;
+    font-size:34px; font-weight:900; box-shadow:0 10px 30px rgba(22,163,74,.45); display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:6px; }
+  #btnFalar svg { width:38%; height:38%; }
+  #btnFalar:active { transform:scale(.97); }
+  .onda { width:min(60vw,240px); height:min(60vw,240px); border-radius:50%; background:var(--verm); display:flex; align-items:center;
+    justify-content:center; color:#fff; animation:pulsa 1.2s infinite; }
+  .onda svg { width:40%; height:40%; }
+  @keyframes pulsa { 0%{box-shadow:0 0 0 0 rgba(220,38,38,.55)} 70%{box-shadow:0 0 0 34px rgba(220,38,38,0)} 100%{box-shadow:0 0 0 0 rgba(220,38,38,0)} }
+  #parcial { min-height:64px; font-size:24px; color:#333; font-style:italic; }
+  .cartao { width:100%; background:#fff; border-radius:18px; padding:8px 18px; box-shadow:0 3px 14px rgba(0,0,0,.09); text-align:left; }
+  .linha { display:flex; justify-content:space-between; gap:12px; padding:12px 0; border-bottom:1px solid #eee; font-size:22px; }
+  .linha:last-child { border-bottom:none; }
+  .linha span:first-child { color:var(--cinza); font-size:18px; padding-top:3px; }
+  .linha b { text-align:right; }
+  .novo { color:#b45309; font-size:16px; display:block; font-weight:600; }
+  .botoes { display:flex; gap:14px; width:100%; }
+  .btn { flex:1; border:none; border-radius:18px; padding:22px 10px; font-size:24px; font-weight:900; color:#fff; min-height:86px; }
+  .btn.sim { background:var(--verde); }
+  .btn.nao { background:var(--verm); }
+  .btn.neutro { background:#334155; }
+  .btn:active { transform:scale(.98); }
+  .ok { width:150px; height:150px; border-radius:50%; background:var(--verde); color:#fff; display:flex; align-items:center; justify-content:center; font-size:90px; }
+  footer { padding:10px 16px; padding-bottom:max(10px, env(safe-area-inset-bottom)); font-size:14px; color:var(--cinza); text-align:center; }
+  #situacao { font-size:17px; margin-bottom:6px; }
+  #situacao.alerta { color:#b45309; font-weight:700; }
+  #btnBaixar { border:1px solid #94a3b8; background:#fff; border-radius:10px; padding:8px 12px; font-size:15px; margin:4px 0 8px; display:none; }
+  .credito { font-size:12px; opacity:.7; }
+  #ajudaBaixar { display:none; text-align:left; font-size:15px; background:#fff; border-radius:12px; padding:10px 14px; margin:6px auto; max-width:520px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📡 Rádio do Rosimar</h1>
+  <span id="quem"></span>
+</header>
+
+<main>
+  <!-- Sem configuração -->
+  <section class="tela" id="tela-config">
+    <p class="grande">App ainda não configurado</p>
+    <p class="media">Abra o <b>link de configuração</b> que o Kevin mandou no WhatsApp, aqui no Chrome.</p>
+  </section>
+
+  <!-- Início -->
+  <section class="tela" id="tela-inicio">
+    <button id="btnFalar" aria-label="Falar">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+      FALAR
+    </button>
+    <p class="media" id="dica">Aperte e fale: <b>cliente, valor, serviço e dia</b>.</p>
+  </section>
+
+  <!-- Ouvindo -->
+  <section class="tela" id="tela-ouvindo">
+    <p class="grande" id="tituloOuvindo">Pode falar…</p>
+    <div class="onda"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></div>
+    <p id="parcial"></p>
+    <div class="botoes"><button class="btn neutro" id="btnParar">PRONTO</button></div>
+  </section>
+
+  <!-- Confirmar -->
+  <section class="tela" id="tela-confirmar">
+    <p class="grande">Está certo?</p>
+    <div class="cartao" id="cartao"></div>
+    <div class="botoes">
+      <button class="btn nao" id="btnNao">✖ FALAR<br>DE NOVO</button>
+      <button class="btn sim" id="btnSim">✔ SIM,<br>GRAVAR</button>
+    </div>
+  </section>
+
+  <!-- Gravado -->
+  <section class="tela" id="tela-gravado">
+    <div class="ok">✔</div>
+    <p class="grande" id="msgGravado">Gravado!</p>
+    <p class="media" id="subGravado"></p>
+    <div class="botoes"><button class="btn sim" id="btnOutro">REGISTRAR OUTRO</button></div>
+  </section>
+
+  <!-- Erro -->
+  <section class="tela" id="tela-erro">
+    <p class="grande" id="msgErro">Não deu certo</p>
+    <p class="media" id="subErro"></p>
+    <div class="botoes"><button class="btn sim" id="btnVoltar">VOLTAR</button></div>
+  </section>
+</main>
+
+<footer>
+  <div id="situacao"></div>
+  <button id="btnBaixar">📲 BAIXAR APP</button>
+  <div id="ajudaBaixar">
+    <b>Android (Chrome):</b> menu ⋮ → <b>Instalar app</b> (ou "Adicionar à tela inicial").<br>
+    <b>iPhone (Safari):</b> botão Compartilhar → <b>Adicionar à Tela de Início</b>.<br>
+    <b>Abriu pelo WhatsApp?</b> Toque em ⋮ → <b>Abrir no Chrome</b> primeiro.
+  </div>
+  <div class="credito">Criado por Kevin Paulo · @Arkev.arq</div>
+</footer>
+
+<script src="parser.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
