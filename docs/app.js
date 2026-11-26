@@ -25,8 +25,10 @@
           typeof cfg.k === 'string' && cfg.k.length >= 20) {
         LS.set('radio_cfg', { url: cfg.u, chave: cfg.k, quem: String(cfg.n || 'Rosimar').slice(0, 40) });
         LS.set('radio_clientes', []);
-      }
-    } catch (e) { /* link quebrado: ignora */ }
+        LS.set('radio_cfg_erro', '');
+      } else if (typeof cfg.u !== 'string' || !/^https:\/\/script\.google\.com\//.test(cfg.u)) LS.set('radio_cfg_erro', 'O link não tem o endereço da planilha certo (' + String(cfg.u || '').slice(0, 60) + ').');
+      else LS.set('radio_cfg_erro', 'Endereço ou chave não reconhecidos: ' + cfg.u.slice(0, 90) + ' · chave com ' + String(cfg.k || '').length + ' letras.');
+    } catch (e) { LS.set('radio_cfg_erro', 'O link chegou cortado ou com espaço no meio (' + m[1].length + ' letras).'); }
     history.replaceState(null, '', location.pathname + location.search); // tira a chave da barra de endereço
   }
   lerConfigDoLink();
@@ -373,7 +375,11 @@
   });
 
   // ---------- Início ----------
-  if (!cfg) { mostrar('config'); }
+  if (!cfg) {
+    mostrar('config');
+    var errCfg = LS.get('radio_cfg_erro', '');
+    if (errCfg) $('erroConfig').textContent = '⚠ ' + errCfg;
+  }
   else {
     $('quem').textContent = cfg.quem;
     mostrar('inicio');
