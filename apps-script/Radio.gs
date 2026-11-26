@@ -7,6 +7,8 @@
  */
 
 var RADIO = {
+  // Cole aqui o "URL do app da Web" (Implantar → Gerenciar implantações). Termina em /exec.
+  URL_APP: '',
   ABA: 'Lançamentos por voz',
   ABA_CLIENTES: 'Base de Clientes',
   SITE: 'https://kevinpaulor.github.io/radio-do-rosimar/',
@@ -26,10 +28,10 @@ function configurarRadio() {
     props.setProperty('CHAVE', chave);
   }
   radioGarantirAba_();
-  var url = ScriptApp.getService().getUrl();
-  if (url) url = url.replace(/\/dev$/, '/exec'); // o link precisa ser o publicado
-  if (!url) {
-    Logger.log('⚠ Ainda não implantado. Faça: Implantar → Nova implantação → App da Web. Depois rode configurarRadio() de novo.');
+  var url = String(RADIO.URL_APP || '').trim();
+  if (!/^https:\/\/script\.google\.com\/.*\/exec$/.test(url)) {
+    Logger.log('⚠ Falta o endereço publicado. Vá em Implantar → Gerenciar implantações, copie o "URL do app da Web" ' +
+      '(termina em /exec), cole na linha URL_APP lá em cima, salve e rode configurarRadio() de novo.');
     return;
   }
   var linkKevin = radioLinkConfig_(url, chave, 'Kevin (teste)');

@@ -9,26 +9,38 @@
   };
 
   // ---------- Configuração (vem do link #cfg=...) ----------
-  function lerConfigDoLink() {
-    var m = /#cfg=([A-Za-z0-9_-]+)/.exec(location.hash);
-    if (!m) return;
+  function aplicarConfig(b64url) {
     try {
-      var b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
+      var b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
       while (b64.length % 4) b64 += '=';
       var bin = atob(b64);
       var bytes = new Uint8Array(bin.length);
       for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      var cfg = JSON.parse(new TextDecoder().decode(bytes));
-      // O Apps Script às vezes devolve o endereço de teste (/dev); o publicado é /exec.
-      if (typeof cfg.u === 'string') cfg.u = cfg.u.replace(/\/dev$/, '/exec');
-      if (typeof cfg.u === 'string' && /^https:\/\/script\.google\.com\/(a\/[\w.-]+\/)?macros\/s\/[\w-]+\/exec$/.test(cfg.u) &&
-          typeof cfg.k === 'string' && cfg.k.length >= 20) {
-        LS.set('radio_cfg', { url: cfg.u, chave: cfg.k, quem: String(cfg.n || 'Rosimar').slice(0, 40) });
-        LS.set('radio_clientes', []);
-        LS.set('radio_cfg_erro', '');
-      } else if (typeof cfg.u !== 'string' || !/^https:\/\/script\.google\.com\//.test(cfg.u)) LS.set('radio_cfg_erro', 'O link não tem o endereço da planilha certo (' + String(cfg.u || '').slice(0, 60) + ').');
-      else LS.set('radio_cfg_erro', 'Endereço ou chave não reconhecidos: ' + cfg.u.slice(0, 90) + ' · chave com ' + String(cfg.k || '').length + ' letras.');
-    } catch (e) { LS.set('radio_cfg_erro', 'O link chegou cortado ou com espaço no meio (' + m[1].length + ' letras).'); }
+      var c = JSON.parse(new TextDecoder().decode(bytes));
+      if (typeof c.u === 'string' && /\/dev$/.test(c.u)) return 'Este link é antigo (endereço de teste). Peça ao Kevin o link novo.';
+      if (typeof c.u !== 'string' || !/^https:\/\/script\.google\.com\/(a\/[\w.-]+\/)?macros\/s\/[\w-]+\/exec$/.test(c.u))
+        return 'Endereço da planilha não reconhecido: ' + String(c.u || '(vazio)').slice(0, 90);
+      if (typeof c.k !== 'string' || c.k.length < 20) return 'A chave veio incompleta.';
+      LS.set('radio_cfg', { url: c.u, chave: c.k, quem: String(c.n || 'Rosimar').slice(0, 40) });
+      LS.set('radio_clientes', []);
+      return '';
+    } catch (e) {
+      return 'O link chegou cortado (' + b64url.length + ' letras). Copie de novo, inteiro.';
+    }
+  }
+  /** Aceita o link inteiro, só o código, com espaços ou quebras de linha no meio. */
+  function extrairCodigo(texto) {
+    var limpo = String(texto || '').replace(/\s+/g, '');
+    var m = /#cfg=([A-Za-z0-9_-]+)/.exec(limpo);
+    if (m) return m[1];
+    if (/^[A-Za-z0-9_-]{40,}$/.test(limpo)) return limpo;
+    return '';
+  }
+  function lerConfigDoLink() {
+    var m = /#cfg=([A-Za-z0-9_-]+)/.exec(location.hash);
+    if (!m) return;
+    var erro = aplicarConfig(m[1]);
+    LS.set('radio_cfg_erro', erro);
     history.replaceState(null, '', location.pathname + location.search); // tira a chave da barra de endereço
   }
   lerConfigDoLink();
@@ -389,6 +401,14 @@
     if (!Rec) erro(new Error('sem-reconhecimento'));
     else talvezComecarSozinho();
   }
+
+  $('btnColar').addEventListener('click', function () {
+    var cod = extrairCodigo($('campoLink').value);
+    if (!cod) { $('erroConfig').textContent = '⚠ Não achei o link aí. Cole o link inteiro que começa com https://kevinpaulor.github.io'; return; }
+    var erro = aplicarConfig(cod);
+    if (erro) { $('erroConfig').textContent = '⚠ ' + erro; return; }
+    location.replace(location.pathname);
+  });
 
   // Para os testes automáticos
   window.__radio = { registrar: registrar, enviarFila: enviarFila, estado: function () { return tela; } };
