@@ -290,6 +290,18 @@
     if (!enviou && meu === fluxo) await falar('Sem internet agora. Eu envio depois, sozinho.');
   }
 
+  // Chave trocada pelo Kevin: apaga a lista de clientes e a configuração deste celular.
+  // A fila de registros não enviados fica guardada e sai quando o link novo for aberto.
+  function chaveRevogada() {
+    try { localStorage.removeItem('radio_clientes'); localStorage.removeItem('radio_cfg'); localStorage.removeItem('radio_hist'); } catch (e) { /* nada */ }
+    cfg = null;
+    LS.set('radio_cfg_erro', 'Este link foi desativado. Peça ao Kevin o link novo.');
+    cancelarTudo();
+    $('quem').textContent = '';
+    $('erroConfig').textContent = '⚠ Este link foi desativado. Peça ao Kevin o link novo.';
+    mostrar('config');
+  }
+
   // ---------- Envio para a planilha ----------
   var enviando = null;
   function enviarFila() {
@@ -300,7 +312,7 @@
       try {
         var resp = await fetch(cfg.url, { method: 'POST', body: JSON.stringify({ chave: cfg.chave, registros: fila.slice(0, 50) }) });
         var json = await resp.json();
-        if (!json.ok) { console.warn('Planilha recusou:', json.erro); return false; }
+        if (!json.ok) { if (json.erro === 'chave') chaveRevogada(); return false; }
         var ok = {};
         (json.gravados || []).forEach(function (id) { ok[id] = true; });
         LS.set('radio_fila', LS.get('radio_fila', []).filter(function (r) { return !ok[r.id]; }));
@@ -319,6 +331,7 @@
     try {
       var resp = await fetch(cfg.url + '?acao=clientes&chave=' + encodeURIComponent(cfg.chave));
       var json = await resp.json();
+      if (!json.ok && json.erro === 'chave') { chaveRevogada(); return; }
       if (json.ok && Array.isArray(json.clientes)) {
         LS.set('radio_clientes', json.clientes.slice(0, 2000).map(function (c) {
           return { nome: String(c.nome || '').slice(0, 120), extrato: String(c.extrato || '').slice(0, 160),
@@ -382,7 +395,7 @@
 
   window.addEventListener('online', function () { enviarFila(); });
   document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'visible') { enviarFila(); talvezComecarSozinho(); }
+    if (document.visibilityState === 'visible') { enviarFila(); atualizarClientes(); talvezComecarSozinho(); }
     else if (tela === 'ouvindo' || tela === 'confirmar') { cancelarTudo(); mostrar('inicio'); }
   });
 
