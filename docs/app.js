@@ -19,7 +19,9 @@
       var bytes = new Uint8Array(bin.length);
       for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       var cfg = JSON.parse(new TextDecoder().decode(bytes));
-      if (typeof cfg.u === 'string' && /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(cfg.u) &&
+      // O Apps Script às vezes devolve o endereço de teste (/dev); o publicado é /exec.
+      if (typeof cfg.u === 'string') cfg.u = cfg.u.replace(/\/dev$/, '/exec');
+      if (typeof cfg.u === 'string' && /^https:\/\/script\.google\.com\/(a\/[\w.-]+\/)?macros\/s\/[\w-]+\/exec$/.test(cfg.u) &&
           typeof cfg.k === 'string' && cfg.k.length >= 20) {
         LS.set('radio_cfg', { url: cfg.u, chave: cfg.k, quem: String(cfg.n || 'Rosimar').slice(0, 40) });
         LS.set('radio_clientes', []);

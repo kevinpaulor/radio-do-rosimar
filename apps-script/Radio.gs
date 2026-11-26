@@ -27,6 +27,7 @@ function configurarRadio() {
   }
   radioGarantirAba_();
   var url = ScriptApp.getService().getUrl();
+  if (url) url = url.replace(/\/dev$/, '/exec'); // o link precisa ser o publicado
   if (!url) {
     Logger.log('⚠ Ainda não implantado. Faça: Implantar → Nova implantação → App da Web. Depois rode configurarRadio() de novo.');
     return;
