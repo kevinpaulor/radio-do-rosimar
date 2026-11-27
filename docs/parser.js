@@ -179,6 +179,13 @@
         });
         if (!achou) return;
         var nota = (soma / fortes.length) * v.peso;
+        // Uma palavra comprida e bem característica já identifica o cliente ("Apóstolo" → "7 Apóstolos…").
+        fortes.forEach(function (ct) {
+          if (ct.length < 6) return;
+          var m = 0;
+          toks.forEach(function (tt) { var p = parecido(ct, tt); if (p > m) m = p; });
+          if (m >= 0.85 && m * 0.8 * v.peso > nota) nota = m * 0.8 * v.peso;
+        });
         var bonusGen = 0;
         todos.forEach(function (gt) { if (GENERICAS[gt] && toks.indexOf(gt) >= 0) bonusGen += 0.02; });
         nota += bonusGen + achou * 0.01;
