@@ -143,7 +143,8 @@
     descartarGravacao();
     if (LS.get('radio_sem_audio', false) || !window.MediaRecorder || !navigator.mediaDevices) return;
     try {
-      var stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      // Sem cancelamento de eco: no Android ele coloca o celular em "modo ligação" e a voz do app fica baixa ou some.
+      var stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
       var tipos = ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
       var mime = tipos.filter(function (t) { return MediaRecorder.isTypeSupported(t); })[0] || '';
       var rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
@@ -229,15 +230,15 @@
     falas = [];
     audioAtual = null;
     try {
-      await iniciarGravacao();
-      if (meu !== fluxo) { descartarGravacao(); return; }
-      var gravando = !!grav;
       var texto;
       mostrar('ouvindo');
       $('tituloOuvindo').textContent = 'Qual é o cliente?';
       $('parcial').textContent = '';
-      await falar('Qual é o cliente?');
+      await falar('Qual é o cliente?'); // pergunta antes de ligar a gravação, para a voz sair normal
       if (meu !== fluxo) return;
+      await iniciarGravacao();
+      if (meu !== fluxo) { descartarGravacao(); return; }
+      var gravando = !!grav;
       try { texto = await ouvirNaTela('Qual é o cliente?'); }
       catch (e) {
         if (!(gravando && e.message === 'mic-ocupado')) throw e;
