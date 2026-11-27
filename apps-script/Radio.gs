@@ -70,6 +70,9 @@ function radioGarantirAba_() {
     aba.getRange(1, 1, 1, RADIO.CABECALHO.length).setValues([RADIO.CABECALHO]).setFontWeight('bold');
     aba.setFrozenRows(1);
   }
+  // garante a coluna "Áudio" (L) em abas criadas antes dela existir
+  if (aba.getMaxColumns() < RADIO.CABECALHO.length) aba.insertColumnsAfter(aba.getMaxColumns(), RADIO.CABECALHO.length - aba.getMaxColumns());
+  if (!aba.getRange(1, 12).getValue()) aba.getRange(1, 12).setValue('Áudio').setFontWeight('bold');
   return aba;
 }
 
