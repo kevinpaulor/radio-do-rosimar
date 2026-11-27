@@ -101,8 +101,26 @@
   var Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
   var recAtual = null;
 
+  // ---------- Modo teste: responder digitando ----------
+  var digitando = null; // { resolve }
+  function modoDigitar() { return !!(cfg && /teste/i.test(cfg.quem) && LS.get('radio_digitar', true)); }
+  function esperarDigitado() {
+    return new Promise(function (resolve) {
+      digitando = { resolve: resolve };
+      $('respostaDigitada').style.display = 'flex';
+      $('campoResposta').value = '';
+      setTimeout(function () { try { $('campoResposta').focus(); } catch (e) { /* nada */ } }, 50);
+    });
+  }
+  function entregarDigitado(texto) {
+    var d = digitando; digitando = null;
+    $('respostaDigitada').style.display = 'none';
+    if (d) d.resolve(String(texto || '').trim());
+  }
+
   function ouvir(opcoes) {
     opcoes = opcoes || {};
+    if (modoDigitar()) return esperarDigitado();
     return new Promise(function (resolve, reject) {
       if (!Rec) return reject(new Error('sem-reconhecimento'));
       var rec = new Rec();
@@ -136,12 +154,15 @@
       try { rec.start(); } catch (e) { clearTimeout(limite); reject(e); }
     });
   }
-  function pararDeOuvir() { if (recAtual) { try { recAtual.stop(); } catch (e) { /* nada */ } } }
+  function pararDeOuvir() {
+    if (digitando) return entregarDigitado($('campoResposta').value);
+    if (recAtual) { try { recAtual.stop(); } catch (e) { /* nada */ } }
+  }
   // ---------- Gravação do áudio (para o Kevin conferir depois) ----------
   var grav = null;
   async function iniciarGravacao() {
     descartarGravacao();
-    if (LS.get('radio_sem_audio', false) || !window.MediaRecorder || !navigator.mediaDevices) return;
+    if (modoDigitar() || LS.get('radio_sem_audio', false) || !window.MediaRecorder || !navigator.mediaDevices) return;
     try {
       // Sem cancelamento de eco: no Android ele coloca o celular em "modo ligação" e a voz do app fica baixa ou some.
       var stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
@@ -206,6 +227,7 @@
 
   function cancelarTudo() {
     descartarGravacao();
+    if (digitando) entregarDigitado('');
     fluxo++;
     if (recAtual) { try { recAtual.abort(); } catch (e) { /* nada */ } recAtual = null; }
     if ('speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch (e) { /* nada */ } }
@@ -359,7 +381,7 @@
       var sn = P.simOuNao(resp);
       if (sn === 'sim') return salvar();
       if (sn === 'nao') return falarDeNovo();
-      if (t === 0 && resp) await falar('Diga sim ou não.');
+      if (t === 0 && resp) await falar(modoDigitar() ? 'Digite sim ou não.' : 'Diga sim ou não.');
     }
   }
 
@@ -525,6 +547,11 @@
   $('btnNao').addEventListener('click', falarDeNovo);
   $('btnOutro').addEventListener('click', function () { cancelarTudo(); registrar(); });
   $('btnVoltar').addEventListener('click', function () { cancelarTudo(); mostrar('inicio'); });
+  $('btnResposta').addEventListener('click', function () { entregarDigitado($('campoResposta').value); });
+  $('campoResposta').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); entregarDigitado($('campoResposta').value); }
+  });
+  $('chkDigitar').addEventListener('change', function () { LS.set('radio_digitar', $('chkDigitar').checked); });
 
   // ---------- Instalar app ----------
   var pedidoInstalar = null;
@@ -565,6 +592,7 @@
   }
   else {
     $('quem').textContent = cfg.quem;
+    if (/teste/i.test(cfg.quem)) { $('caixaTeste').style.display = 'block'; $('chkDigitar').checked = LS.get('radio_digitar', true); }
     mostrar('inicio');
     atualizarRodape();
     enviarFila();

@@ -69,7 +69,7 @@
     <textarea id="campoLink" rows="4" placeholder="Cole o link aqui" style="width:100%;font-size:16px;border-radius:12px;border:2px solid #94a3b8;padding:10px"></textarea>
     <div class="botoes"><button class="btn sim" id="btnColar">CONFIGURAR</button></div>
     <p class="media" id="erroConfig" style="color:#b45309;font-size:18px"></p>
-    <p style="font-size:12px;color:#888">versão 12</p>
+    <p style="font-size:12px;color:#888">versão 13</p>
   </section>
 
   <!-- Início -->
@@ -78,6 +78,9 @@
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
       FALAR
     </button>
+    <label id="caixaTeste" style="display:none;font-size:18px;background:#fff;border:2px solid #94a3b8;border-radius:12px;padding:10px 14px">
+      <input type="checkbox" id="chkDigitar" style="width:22px;height:22px;vertical-align:middle"> ⌨ Responder digitando (teste)
+    </label>
     <p class="media" id="dica">Aperte e diga o <b>cliente</b>.<br>Depois: serviço, valor e dia.</p>
   </section>
 
@@ -113,6 +116,12 @@
     <p class="media" id="subErro"></p>
     <div class="botoes"><button class="btn sim" id="btnVoltar">VOLTAR</button></div>
   </section>
+  <!-- Modo teste: resposta digitada (aparece no lugar de falar) -->
+  <div id="respostaDigitada" style="display:none;width:100%;max-width:520px;gap:8px;flex-direction:column">
+    <input id="campoResposta" type="text" autocomplete="off" placeholder="Digite a resposta"
+      style="width:100%;font-size:18px;padding:14px;border-radius:12px;border:2px solid #16a34a">
+    <button class="btn sim" id="btnResposta" style="min-height:60px;padding:12px;font-size:20px">ENVIAR RESPOSTA</button>
+  </div>
 </main>
 
 <footer>
@@ -126,7 +135,7 @@
   <div class="credito">Criado por Kevin Paulo · @Arkev.arq</div>
 </footer>
 
-<script src="parser.js?v=12"></script>
-<script src="app.js?v=12"></script>
+<script src="parser.js?v=13"></script>
+<script src="app.js?v=13"></script>
 </body>
 </html>
