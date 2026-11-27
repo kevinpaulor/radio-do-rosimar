@@ -233,7 +233,12 @@
       if (meu !== fluxo) { descartarGravacao(); return; }
       var gravando = !!grav;
       var texto;
-      try { texto = await ouvirNaTela('Pode falar…'); }
+      mostrar('ouvindo');
+      $('tituloOuvindo').textContent = 'Qual é o cliente?';
+      $('parcial').textContent = '';
+      await falar('Qual é o cliente?');
+      if (meu !== fluxo) return;
+      try { texto = await ouvirNaTela('Qual é o cliente?'); }
       catch (e) {
         if (!(gravando && e.message === 'mic-ocupado')) throw e;
         texto = '';
@@ -241,12 +246,14 @@
       if (meu !== fluxo) return;
       if (!texto && gravando) {
         // Alguns celulares não deixam gravar e reconhecer ao mesmo tempo: tenta de novo sem gravar.
+        // Só conta como "não grava junto" se o microfone captou voz e mesmo assim o reconhecimento veio vazio.
+        var houveSom = !!(grav && grav.mediu && grav.nivel >= 10);
         descartarGravacao();
         await falar('Fale de novo, por favor.');
         if (meu !== fluxo) return;
-        texto = await ouvirNaTela('Pode falar…');
+        texto = await ouvirNaTela('Qual é o cliente?');
         if (meu !== fluxo) return;
-        if (texto) LS.set('radio_sem_audio', true);
+        if (texto && houveSom) LS.set('radio_sem_audio', true);
       }
       if (!texto) {
         mostrar('inicio');
@@ -256,6 +263,34 @@
       falas.push(texto);
       var clientes = LS.get('radio_clientes', []);
       var r = P.entender(texto, { clientes: clientes });
+
+      // Respondeu só o cliente: pergunta o resto (serviço, valor e dia em qualquer ordem).
+      if (!r.valor && !r.tipo) {
+        var soCliente = P.entenderCliente(texto, clientes);
+        $('tituloOuvindo').textContent = 'Agora o serviço, o valor e o dia';
+        $('parcial').textContent = '';
+        mostrar('ouvindo');
+        await falar('Agora o serviço, o valor e o dia.');
+        if (meu !== fluxo) return;
+        var resto = await ouvirNaTela('Agora o serviço, o valor e o dia');
+        if (meu !== fluxo) return;
+        if (resto) {
+          falas.push(resto);
+          var r2 = P.entender(resto, { clientes: clientes });
+          // o cliente vem da primeira resposta; o resto da segunda
+          var achado = P.acharCliente(texto, clientes);
+          r2.cliente = soCliente.cliente; r2.clienteBase = soCliente.clienteBase; r2.clienteNota = achado ? achado.nota : 0;
+          r2.texto = falas.join(' | ');
+          r2.faltando = [];
+          if (!r2.cliente) r2.faltando.push('cliente');
+          if (!r2.valor) r2.faltando.push('valor');
+          if (!r2.tipo) r2.faltando.push('tipo');
+          r = r2;
+        } else {
+          r.cliente = soCliente.cliente; r.clienteBase = soCliente.clienteBase;
+          r.faltando = r.faltando.filter(function (f) { return f !== 'cliente' || !r.cliente; });
+        }
+      }
 
       // Pergunta o que faltou (uma vez cada)
       var perguntas = { cliente: 'Qual é o cliente?', valor: 'Qual foi o valor?', tipo: 'Qual foi o serviço?' };
