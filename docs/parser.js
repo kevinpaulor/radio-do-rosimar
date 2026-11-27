@@ -289,7 +289,11 @@
         // "sexta", "segunda-feira"
         var alvo = SEMANA[t];
         var dif = (hoje.getDay() - alvo + 7) % 7;
-        data = futuro ? maisDias(hoje, ((alvo - hoje.getDay() + 7) % 7) || 7) : maisDias(hoje, -dif);
+        var agoraH = opcoes.agora ? new Date(opcoes.agora) : new Date();
+        var horaAindaVem = r.hora && r.hora > String(agoraH.getHours()).padStart(2, '0') + ':' + String(agoraH.getMinutes()).padStart(2, '0');
+        var adiante = (alvo - hoje.getDay() + 7) % 7;
+        if (!adiante && !horaAindaVem) adiante = 7; // mesmo dia da semana: hoje só se a hora ainda não passou
+        data = futuro ? maisDias(hoje, adiante) : maisDias(hoje, -dif);
         usado[i] = true;
         if (toks[i + 1] === 'feira') usado[i + 1] = true;
       }
