@@ -56,7 +56,8 @@
       .toLowerCase()
       .normalize('NFD').replace(/[̀-ͯ]/g, '')
       .replace(/r\$\s*/g, ' r$ ')
-      .replace(/[^a-z0-9$.,/ ]+/g, ' ')
+      .replace(/[^a-z0-9$.,/: ]+/g, ' ')
+      .replace(/:(?!\d)/g, ' ')
       .replace(/([a-z])[.,]+(?=\s|$)/g, '$1')
       .replace(/[.,]+(?=\s|$)/g, '')
       .replace(/\s+/g, ' ')
@@ -214,7 +215,7 @@
     var usado = toks.map(function () { return false; });
     var hoje = hojeLocal(opcoes.agora);
     var r = { texto: String(texto || '').trim(), cliente: '', clienteBase: false, valor: null, dataServico: iso(hoje),
-      dataFalada: false, tipo: '', situacao: '' };
+      dataFalada: false, hora: '', tipo: '', situacao: '' };
 
     // Situação (antes de tudo, para "não pagou" não virar "pagou")
     var futuro = /\b(que vem|proxima|proximo|amanha|depois de amanha|vou fazer|marcado|agendado|a fazer)\b/.test(norm);
@@ -238,6 +239,38 @@
 
     // Números
     var nums = acharNumeros(toks);
+
+    // Hora: "às 10", "10h", "10h30", "10:30", "10 horas", "meio dia", "e meia", "da tarde"
+    var hh = null, mm = 0, fimHora = -1;
+    for (var q = 0; q < toks.length && hh === null; q++) {
+      var mh = /^(\d{1,2})(?::(\d{2})|h(\d{2})?)$/.exec(toks[q]);
+      if (mh && +mh[1] <= 23) {
+        hh = +mh[1]; mm = +(mh[2] || mh[3] || 0); usado[q] = true; fimHora = q + 1;
+        if (toks[q - 1] === 'as') usado[q - 1] = true;
+      } else if (toks[q] === 'meio' && toks[q + 1] === 'dia') {
+        hh = 12; usado[q] = usado[q + 1] = true; fimHora = q + 2;
+        if (toks[q - 1] === 'ao' || toks[q - 1] === 'as') usado[q - 1] = true;
+      }
+    }
+    if (hh === null) nums.forEach(function (n) {
+      if (hh !== null) return;
+      var antes = toks[n.ini - 1], dep = toks[n.fim];
+      if ((antes === 'as' || dep === 'horas' || dep === 'hora' || dep === 'h') && n.valor === Math.floor(n.valor) && n.valor <= 23) {
+        hh = n.valor; n.hora = true; fimHora = n.fim;
+        for (var x = n.ini; x < n.fim; x++) usado[x] = true;
+        if (antes === 'as') usado[n.ini - 1] = true;
+        if (dep === 'horas' || dep === 'hora' || dep === 'h') { usado[n.fim] = true; fimHora = n.fim + 1; }
+      }
+    });
+    if (hh !== null) {
+      if (toks[fimHora] === 'e' && toks[fimHora + 1] === 'meia') { mm = 30; usado[fimHora] = usado[fimHora + 1] = true; fimHora += 2; }
+      var periodo = toks[fimHora] === 'da' ? toks[fimHora + 1] : '';
+      if (periodo === 'tarde' || periodo === 'noite') { if (hh < 12) hh += 12; usado[fimHora] = usado[fimHora + 1] = true; }
+      else if (periodo === 'manha' || periodo === 'madrugada') { usado[fimHora] = usado[fimHora + 1] = true; }
+      r.hora = String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+      // falou a hora sem dizer que já fez/pagou: é um agendamento
+      if (!/\b(fiz|feito|realizado|terminei|concluido|pagou|paguei|recebi)\b/.test(norm)) futuro = true;
+    }
 
     // Datas
     var data = null;
@@ -271,6 +304,7 @@
         var d = new Date(hoje.getFullYear(), mes, n.valor);
         if (temMes) d = ajustarAno(d, true);
         else if (d > hoje && !futuro) d = new Date(hoje.getFullYear(), hoje.getMonth() - 1, n.valor);
+        else if (d < hoje && futuro) d = new Date(hoje.getFullYear(), hoje.getMonth() + 1, n.valor);
         data = d;
         n.data = true;
         for (var x = n.ini; x < n.fim; x++) usado[x] = true;
@@ -279,6 +313,7 @@
       }
     });
     if (data) { r.dataServico = iso(data); r.dataFalada = true; }
+    if (!r.situacao && (futuro || (data && data > hoje))) r.situacao = 'A fazer';
 
     // Cliente da base primeiro: um número que faz parte do nome ("sete Apóstolos", "Ponto 87") não é o valor.
     var naBase = acharCliente(texto, opcoes.clientes);
@@ -289,7 +324,7 @@
       tn.forEach(function (t) { var m = /\d+/.exec(t); if (m) numerosDoNome[+m[0]] = true; });
     }
     // Valor: o número marcado com "reais"/"R$"; senão o maior que não é data nem parte do nome.
-    var candidatos = nums.filter(function (n) { return !n.data && !numerosDoNome[n.valor]; });
+    var candidatos = nums.filter(function (n) { return !n.data && !n.hora && !numerosDoNome[n.valor]; });
     var marcado = candidatos.filter(function (n) {
       return toks[n.ini - 1] === 'r$' || toks[n.fim - 1] === 'reais' || toks[n.fim] === 'reais' || toks[n.fim] === 'real' || toks[n.fim - 1] === 'centavos';
     });
@@ -380,8 +415,13 @@
     var ontem = iso(maisDias(hojeLocal(agora), -1));
     if (isoData === hoje) return 'hoje';
     if (isoData === ontem) return 'ontem';
+    if (isoData === iso(maisDias(hojeLocal(agora), 1))) return 'amanhã';
     var p = isoData.split('-');
     return 'dia ' + (+p[2]) + ' de ' + MESES_NOME[+p[1]];
+  }
+  function horaFalada(h) {
+    var p = h.split(':'), hh = +p[0], mm = +p[1];
+    return hh + (hh === 1 ? ' hora' : ' horas') + (mm === 30 ? ' e meia' : mm ? ' e ' + mm : '');
   }
   function dataTela(isoData) {
     var p = isoData.split('-');
@@ -394,7 +434,7 @@
     partes.push((r.clienteBase ? 'Cliente ' : 'Cliente novo, ') + r.cliente);
     if (r.valor) partes.push(valorFalado(r.valor));
     if (r.tipo) partes.push(r.tipo.replace('Documento/análise', 'documento ou análise').replace(' + ', ' e ').replace('Outro: ', ''));
-    partes.push(dataFalada(r.dataServico, agora));
+    partes.push(dataFalada(r.dataServico, agora) + (r.hora ? ' às ' + horaFalada(r.hora) : ''));
     if (r.situacao) partes.push(r.situacao.toLowerCase());
     return partes.join(', ') + '. Está certo?';
   }

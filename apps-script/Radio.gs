@@ -13,8 +13,11 @@ var RADIO = {
   ABA_CLIENTES: 'Base de Clientes',
   SITE: 'https://kevinpaulor.github.io/radio-do-rosimar/',
   CABECALHO: ['Data do registro', 'Data do serviço', 'Cliente', 'Valor (R$)', 'Tipo de serviço',
-              'Situação', 'Texto falado', 'Quem registrou', 'Status', 'Alerta', 'ID', 'Áudio'],
+              'Situação', 'Texto falado', 'Quem registrou', 'Status', 'Alerta', 'ID', 'Áudio', 'Hora', 'Agenda'],
   PASTA_AUDIOS: 'Rádio do Rosimar — Áudios',
+  AGENDA: 'Serviços do Rosimar',
+  FUSO: 'America/Sao_Paulo',
+  DURACAO_HORAS: 2,
   TIPOS: ['Dedetização', 'Descupinização', "Limpeza de caixa d'água", 'Desratização',
           'Impermeabilização', 'Documento/análise', 'Venda de produto', 'Conserto de bomba', 'Outro'],
   SITUACOES: ['Realizado', 'A fazer', 'Pago', 'A receber']
@@ -30,6 +33,7 @@ function configurarRadio() {
   }
   radioGarantirAba_();
   radioPastaAudios_(); // cria a pasta dos áudios (e pede a permissão do Drive na primeira vez)
+  radioAgenda_();      // cria a agenda "Serviços do Rosimar" (e pede a permissão do Agenda na primeira vez)
   var url = String(RADIO.URL_APP || '').trim();
   if (!/^https:\/\/script\.google\.com\/.*\/exec$/.test(url)) {
     Logger.log('⚠ Falta o endereço publicado. Vá em Implantar → Gerenciar implantações, copie o "URL do app da Web" ' +
@@ -70,9 +74,11 @@ function radioGarantirAba_() {
     aba.getRange(1, 1, 1, RADIO.CABECALHO.length).setValues([RADIO.CABECALHO]).setFontWeight('bold');
     aba.setFrozenRows(1);
   }
-  // garante a coluna "Áudio" (L) em abas criadas antes dela existir
+  // garante as colunas novas (Áudio, Hora, Agenda) em abas criadas antes delas existirem
   if (aba.getMaxColumns() < RADIO.CABECALHO.length) aba.insertColumnsAfter(aba.getMaxColumns(), RADIO.CABECALHO.length - aba.getMaxColumns());
-  if (!aba.getRange(1, 12).getValue()) aba.getRange(1, 12).setValue('Áudio').setFontWeight('bold');
+  for (var c = 12; c <= RADIO.CABECALHO.length; c++) {
+    if (!aba.getRange(1, c).getValue()) aba.getRange(1, c).setValue(RADIO.CABECALHO[c - 1]).setFontWeight('bold');
+  }
   return aba;
 }
 
@@ -137,6 +143,7 @@ function doPost(e) {
     var gravados = [];
     var linhas = [];
     var audios = [];
+    var extras = [];
     registros.forEach(function (r) {
       var id = radioTexto_(r.id, 40);
       if (!id) return;
@@ -156,7 +163,10 @@ function doPost(e) {
         radioTexto_(r.alerta, 200),
         id
       ]);
-      audios.push(radioSalvarAudio_(r, id));
+      var audio = radioSalvarAudio_(r, id);
+      audios.push(audio);
+      var hora = /^\d{2}:\d{2}$/.test(String(r.hora || '')) ? r.hora : '';
+      extras.push([hora, radioCriarEvento_(r, id, hora, audio)]);
     });
     if (linhas.length) {
       var linha0 = aba.getLastRow() + 1;
@@ -168,6 +178,8 @@ function doPost(e) {
         if (l[9]) aba.getRange(linha0 + i, 1, 1, l.length + 1).setBackground('#fff4cc');
       });
       aba.getRange(linha0, 12, linhas.length, 1).setFormulas(audios.map(function (a) { return [a]; }));
+      aba.getRange(linha0, 13, linhas.length, 1).setNumberFormat('@').setValues(extras.map(function (x) { return [x[0]]; }));
+      aba.getRange(linha0, 14, linhas.length, 1).setFormulas(extras.map(function (x) { return [x[1]]; }));
     }
     return radioResposta_({ ok: true, gravados: gravados });
   } finally {
@@ -247,6 +259,78 @@ function radioPaginaAudio_(fileId, token) {
   }
   return HtmlService.createHtmlOutput(html).setTitle('Áudio · Rádio do Rosimar')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+// ---------- Agenda ----------
+
+/** Agenda própria do rádio. Guarda o id para não criar outra. */
+function radioAgenda_() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty('AGENDA_ID');
+  if (id) { var cal = CalendarApp.getCalendarById(id); if (cal) return cal; }
+  var nova = CalendarApp.createCalendar(RADIO.AGENDA, { color: CalendarApp.Color.GREEN, timeZone: RADIO.FUSO,
+    summary: 'Serviços agendados pelo Rádio do Rosimar' });
+  props.setProperty('AGENDA_ID', nova.getId());
+  return nova;
+}
+
+/** Endereço e telefone do cliente na Base (só para o evento; não vai para os celulares). */
+function radioInfoCliente_(nome) {
+  var aba = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(RADIO.ABA_CLIENTES);
+  if (!aba || !nome) return {};
+  var dados = aba.getDataRange().getValues();
+  var cab = dados[0].map(function (c) { return String(c).trim().toLowerCase(); });
+  var iNome = Math.max(0, cab.indexOf('nome do cliente'));
+  var iEnd = cab.indexOf('endereço completo'), iTel = cab.indexOf('telefone (whatsapp)'), iBairro = cab.indexOf('bairro');
+  var alvo = String(nome).trim().toLowerCase();
+  for (var r = 1; r < dados.length; r++) {
+    if (String(dados[r][iNome]).trim().toLowerCase() !== alvo) continue;
+    return {
+      endereco: iEnd < 0 ? '' : String(dados[r][iEnd] || '').trim(),
+      telefone: iTel < 0 ? '' : String(dados[r][iTel] || '').trim(),
+      bairro: iBairro < 0 ? '' : String(dados[r][iBairro] || '').trim()
+    };
+  }
+  return {};
+}
+
+/** Cria o evento na agenda quando o serviço é "A fazer". Devolve a fórmula "📅 Ver" (ou vazio). */
+function radioCriarEvento_(r, id, hora, formulaAudio) {
+  try {
+    if (r.situacao !== 'A fazer') return '';
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(r.dataServico || ''));
+    if (!m) return '';
+    var cal = radioAgenda_();
+    var cliente = radioTexto_(r.cliente, 120) || 'sem cliente';
+    var titulo = (radioTexto_(r.tipo, 60) || 'Serviço') + ' · ' + cliente;
+    var info = radioInfoCliente_(r.cliente);
+    var valor = radioValor_(r.valor);
+    var linhasDesc = [
+      'Cliente: ' + cliente + (info.bairro ? ' (' + info.bairro + ')' : ''),
+      valor ? 'Valor: R$ ' + valor.toFixed(2).replace('.', ',') : 'Valor: não informado',
+      info.telefone ? 'Telefone: ' + info.telefone : '',
+      'Falado: ' + radioTexto_(r.texto, 400),
+      'Registrado por: ' + radioTexto_(r.quem, 40),
+      'ID: ' + id
+    ];
+    var urlAudio = /"(https:[^"]+)"/.exec(formulaAudio || '');
+    if (urlAudio) linhasDesc.push('Áudio: ' + urlAudio[1]);
+    var opcoes = { description: linhasDesc.filter(String).join('\n'), location: info.endereco || '' };
+    var ev;
+    if (hora) {
+      var ini = Utilities.parseDate(r.dataServico + ' ' + hora, RADIO.FUSO, 'yyyy-MM-dd HH:mm');
+      var fim = new Date(ini.getTime() + RADIO.DURACAO_HORAS * 3600000);
+      ev = cal.createEvent(titulo, ini, fim, opcoes);
+      ev.addPopupReminder(60);
+    } else {
+      var dia = Utilities.parseDate(r.dataServico + ' 12:00', RADIO.FUSO, 'yyyy-MM-dd HH:mm');
+      ev = cal.createAllDayEvent(titulo, dia, opcoes);
+    }
+    var eid = Utilities.base64EncodeWebSafe(ev.getId().split('@')[0] + ' ' + cal.getId()).replace(/=+$/, '');
+    return '=HYPERLINK("https://www.google.com/calendar/event?eid=' + eid + '","📅 Ver")';
+  } catch (err) {
+    return '';
+  }
 }
 
 /** Texto seguro: corta o tamanho e impede fórmula começando com = + - @ */

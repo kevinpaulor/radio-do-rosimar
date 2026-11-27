@@ -302,7 +302,8 @@
     c.appendChild(linhaCartao('Cliente', r.cliente || '— sem nome —', r.cliente && !r.clienteBase ? 'cliente novo' : ''));
     c.appendChild(linhaCartao('Valor', r.valor ? P.valorTela(r.valor) : '— sem valor —'));
     c.appendChild(linhaCartao('Serviço', r.tipo || '— não entendi —'));
-    c.appendChild(linhaCartao('Dia', P.dataTela(r.dataServico)));
+    c.appendChild(linhaCartao('Dia', P.dataTela(r.dataServico) + (r.hora ? ' às ' + r.hora : ''),
+      r.situacao === 'A fazer' ? 'vai para a agenda' : ''));
     if (r.situacao) c.appendChild(linhaCartao('Situação', r.situacao));
     var ouvi = document.createElement('div');
     ouvi.className = 'linha';
@@ -367,6 +368,7 @@
     var reg = {
       id: novoId(),
       dataServico: r.dataServico,
+      hora: r.hora || '',
       cliente: r.cliente || '',
       valor: r.valor || '',
       tipo: r.tipo || '',
