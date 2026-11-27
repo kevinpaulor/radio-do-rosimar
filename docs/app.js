@@ -162,7 +162,8 @@
   var grav = null;
   async function iniciarGravacao() {
     descartarGravacao();
-    if (modoDigitar() || LS.get('radio_sem_audio', false) || !window.MediaRecorder || !navigator.mediaDevices) return;
+    // No modo digitado não há reconhecimento disputando o microfone: grava sempre (para testar o áudio).
+    if ((!modoDigitar() && LS.get('radio_sem_audio', false)) || !window.MediaRecorder || !navigator.mediaDevices) return;
     try {
       // Sem cancelamento de eco: no Android ele coloca o celular em "modo ligação" e a voz do app fica baixa ou some.
       var stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
@@ -412,16 +413,18 @@
     var audio = audioAtual;
     audioAtual = null;
     var audioB64 = '';
-    if (audio && audio.blob.size && !audio.silencioso && audio.blob.size < 3000000) {
+    var teste = modoDigitar();
+    if (teste) alertas.push('Digitado (teste)');
+    if (audio && audio.blob.size && (teste || !audio.silencioso) && audio.blob.size < 3000000) {
       audioB64 = await paraBase64(audio.blob);
-      LS.set('radio_mudo_seguidos', 0);
+      if (!teste) LS.set('radio_mudo_seguidos', 0);
+    } else if (teste) {
+      alertas.push('Sem áudio (microfone não liberou)');
     } else if (audio && audio.silencioso) {
       alertas.push('Áudio saiu mudo');
       var mudos = LS.get('radio_mudo_seguidos', 0) + 1;
       LS.set('radio_mudo_seguidos', mudos);
       if (mudos >= 2) LS.set('radio_sem_audio', true); // este celular não grava junto com o reconhecimento
-    } else if (modoDigitar()) {
-      alertas.push('Digitado (teste)');
     } else if (LS.get('radio_sem_audio', false)) {
       alertas.push('Sem áudio (este celular não grava junto)');
     }
