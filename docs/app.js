@@ -5,7 +5,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var LS = {
     get: function (k, padrao) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : padrao; } catch (e) { return padrao; } },
-    set: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* sem espaço */ } }
+    set: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } }
   };
 
   // ---------- Configuração (vem do link #cfg=...) ----------
@@ -23,6 +23,8 @@
       if (typeof c.k !== 'string' || c.k.length < 20) return 'A chave veio incompleta.';
       LS.set('radio_cfg', { url: c.u, chave: c.k, quem: String(c.n || 'Rosimar').slice(0, 40) });
       LS.set('radio_clientes', []);
+      LS.set('radio_sem_audio', false);
+      LS.set('radio_mudo_seguidos', 0);
       return '';
     } catch (e) {
       return 'O link chegou cortado (' + b64url.length + ' letras). Copie de novo, inteiro.';
@@ -123,6 +125,7 @@
       rec.onerror = function (ev) {
         if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') { acabou = true; clearTimeout(limite); reject(new Error('microfone-negado')); }
         else if (ev.error === 'network') { acabou = true; clearTimeout(limite); reject(new Error('sem-internet-voz')); }
+        else if (ev.error === 'audio-capture') { acabou = true; clearTimeout(limite); reject(new Error('mic-ocupado')); }
         // no-speech / aborted: termina no onend
       };
       rec.onend = function () {
@@ -134,7 +137,74 @@
     });
   }
   function pararDeOuvir() { if (recAtual) { try { recAtual.stop(); } catch (e) { /* nada */ } } }
+  // ---------- Gravação do áudio (para o Kevin conferir depois) ----------
+  var grav = null;
+  async function iniciarGravacao() {
+    descartarGravacao();
+    if (LS.get('radio_sem_audio', false) || !window.MediaRecorder || !navigator.mediaDevices) return;
+    try {
+      var stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      var tipos = ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
+      var mime = tipos.filter(function (t) { return MediaRecorder.isTypeSupported(t); })[0] || '';
+      var rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
+      var g = { rec: rec, stream: stream, chunks: [], nivel: 0, mediu: false, inicio: Date.now(),
+        mime: (rec.mimeType || mime || 'audio/webm').split(';')[0] };
+      rec.ondataavailable = function (e) { if (e.data && e.data.size) g.chunks.push(e.data); };
+      rec.start(1000);
+      try { // mede o volume para saber se gravou de verdade ou saiu mudo
+        var Ctx = window.AudioContext || window.webkitAudioContext;
+        g.ctx = new Ctx();
+        var an = g.ctx.createAnalyser(); an.fftSize = 512;
+        g.ctx.createMediaStreamSource(stream).connect(an);
+        var buf = new Uint8Array(an.fftSize);
+        g.timer = setInterval(function () {
+          if (g.ctx.state !== 'running') { g.ctx.resume().catch(function () {}); return; }
+          an.getByteTimeDomainData(buf);
+          var m = 0; for (var i = 0; i < buf.length; i++) { var d = Math.abs(buf[i] - 128); if (d > m) m = d; }
+          g.mediu = true; if (m > g.nivel) g.nivel = m;
+        }, 150);
+      } catch (e) { /* sem medidor: grava assim mesmo */ }
+      grav = g;
+    } catch (e) { grav = null; }
+  }
+  function fecharGravacao(g) {
+    clearInterval(g.timer);
+    try { g.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* nada */ }
+    try { if (g.ctx) g.ctx.close(); } catch (e) { /* nada */ }
+  }
+  function descartarGravacao() {
+    var g = grav; grav = null;
+    if (!g) return;
+    try { g.rec.onstop = null; g.rec.stop(); } catch (e) { /* nada */ }
+    fecharGravacao(g);
+  }
+  function pararGravacao() {
+    return new Promise(function (resolve) {
+      var g = grav; grav = null;
+      if (!g) return resolve(null);
+      var pronto = false;
+      var fim = function () {
+        if (pronto) return; pronto = true;
+        fecharGravacao(g);
+        var blob = new Blob(g.chunks, { type: g.mime });
+        resolve({ blob: blob, mime: g.mime, silencioso: g.mediu && g.nivel < 4, segundos: Math.round((Date.now() - g.inicio) / 1000) });
+      };
+      g.rec.onstop = fim;
+      setTimeout(fim, 2500);
+      try { g.rec.stop(); } catch (e) { fim(); }
+    });
+  }
+  function paraBase64(blob) {
+    return new Promise(function (res) {
+      var fr = new FileReader();
+      fr.onload = function () { res(String(fr.result).split(',')[1] || ''); };
+      fr.onerror = function () { res(''); };
+      fr.readAsDataURL(blob);
+    });
+  }
+
   function cancelarTudo() {
+    descartarGravacao();
     fluxo++;
     if (recAtual) { try { recAtual.abort(); } catch (e) { /* nada */ } recAtual = null; }
     if ('speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch (e) { /* nada */ } }
@@ -152,13 +222,32 @@
     return ouvir({ aoParcial: function (t) { $('parcial').textContent = t; } });
   }
 
+  var audioAtual = null;
   async function registrar() {
     cancelarTudo();
     var meu = fluxo;
     falas = [];
+    audioAtual = null;
     try {
-      var texto = await ouvirNaTela('Pode falar…');
+      await iniciarGravacao();
+      if (meu !== fluxo) { descartarGravacao(); return; }
+      var gravando = !!grav;
+      var texto;
+      try { texto = await ouvirNaTela('Pode falar…'); }
+      catch (e) {
+        if (!(gravando && e.message === 'mic-ocupado')) throw e;
+        texto = '';
+      }
       if (meu !== fluxo) return;
+      if (!texto && gravando) {
+        // Alguns celulares não deixam gravar e reconhecer ao mesmo tempo: tenta de novo sem gravar.
+        descartarGravacao();
+        await falar('Fale de novo, por favor.');
+        if (meu !== fluxo) return;
+        texto = await ouvirNaTela('Pode falar…');
+        if (meu !== fluxo) return;
+        if (texto) LS.set('radio_sem_audio', true);
+      }
       if (!texto) {
         mostrar('inicio');
         await falar('Não ouvi nada. Aperte o botão e fale de novo.');
@@ -186,6 +275,8 @@
         if (campo === 'valor') r.valor = P.entenderValor(resp);
         if (campo === 'tipo') r.tipo = P.entenderTipo(resp);
       }
+      audioAtual = await pararGravacao();
+      if (meu !== fluxo) return;
       atual = r;
       await confirmar(meu);
     } catch (e) {
@@ -259,6 +350,20 @@
     else if (r.clienteNota && r.clienteNota < 0.85) alertas.push('Conferir o cliente');
     if (!r.valor) alertas.push('Sem valor');
     if (!r.tipo) alertas.push('Sem tipo de serviço');
+    var audio = audioAtual;
+    audioAtual = null;
+    var audioB64 = '';
+    if (audio && audio.blob.size && !audio.silencioso && audio.blob.size < 3000000) {
+      audioB64 = await paraBase64(audio.blob);
+      LS.set('radio_mudo_seguidos', 0);
+    } else if (audio && audio.silencioso) {
+      alertas.push('Áudio saiu mudo');
+      var mudos = LS.get('radio_mudo_seguidos', 0) + 1;
+      LS.set('radio_mudo_seguidos', mudos);
+      if (mudos >= 2) LS.set('radio_sem_audio', true); // este celular não grava junto com o reconhecimento
+    } else if (LS.get('radio_sem_audio', false)) {
+      alertas.push('Sem áudio (este celular não grava junto)');
+    }
     var reg = {
       id: novoId(),
       dataServico: r.dataServico,
@@ -270,9 +375,15 @@
       quem: cfg.quem,
       alerta: alertas.join(' · ')
     };
+    if (audioB64) reg.audio = { mime: audio.mime, b64: audioB64, segundos: audio.segundos };
     var fila = LS.get('radio_fila', []);
     fila.push(reg);
-    LS.set('radio_fila', fila);
+    if (!LS.set('radio_fila', fila)) {
+      // memória cheia: guarda o registro sem o áudio
+      delete reg.audio;
+      reg.alerta = (reg.alerta ? reg.alerta + ' · ' : '') + 'Áudio não coube no celular';
+      LS.set('radio_fila', fila);
+    }
     var hist = LS.get('radio_hist', []);
     hist.push({ quando: Date.now(), cliente: reg.cliente, valor: reg.valor });
     LS.set('radio_hist', hist.slice(-60));
@@ -307,15 +418,24 @@
   function enviarFila() {
     if (enviando) return enviando;
     enviando = (async function () {
-      var fila = LS.get('radio_fila', []);
-      if (!fila.length || !cfg) return true;
       try {
-        var resp = await fetch(cfg.url, { method: 'POST', body: JSON.stringify({ chave: cfg.chave, registros: fila.slice(0, 50) }) });
-        var json = await resp.json();
-        if (!json.ok) { if (json.erro === 'chave') chaveRevogada(); return false; }
-        var ok = {};
-        (json.gravados || []).forEach(function (id) { ok[id] = true; });
-        LS.set('radio_fila', LS.get('radio_fila', []).filter(function (r) { return !ok[r.id]; }));
+        for (var volta = 0; volta < 20; volta++) {
+          var fila = LS.get('radio_fila', []);
+          if (!fila.length || !cfg) return true;
+          var lote = [], peso = 0;
+          for (var i = 0; i < fila.length && lote.length < 20; i++) {
+            var p = fila[i].audio ? fila[i].audio.b64.length : 500;
+            if (lote.length && peso + p > 4000000) break;
+            lote.push(fila[i]); peso += p;
+          }
+          var resp = await fetch(cfg.url, { method: 'POST', body: JSON.stringify({ chave: cfg.chave, registros: lote }) });
+          var json = await resp.json();
+          if (!json.ok) { if (json.erro === 'chave') chaveRevogada(); return false; }
+          var ok = {};
+          (json.gravados || []).forEach(function (id) { ok[id] = true; });
+          if (!Object.keys(ok).length) return false;
+          LS.set('radio_fila', LS.get('radio_fila', []).filter(function (r) { return !ok[r.id]; }));
+        }
         return LS.get('radio_fila', []).length === 0;
       } catch (e) {
         return false;

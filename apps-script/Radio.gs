@@ -13,7 +13,8 @@ var RADIO = {
   ABA_CLIENTES: 'Base de Clientes',
   SITE: 'https://kevinpaulor.github.io/radio-do-rosimar/',
   CABECALHO: ['Data do registro', 'Data do serviço', 'Cliente', 'Valor (R$)', 'Tipo de serviço',
-              'Situação', 'Texto falado', 'Quem registrou', 'Status', 'Alerta', 'ID'],
+              'Situação', 'Texto falado', 'Quem registrou', 'Status', 'Alerta', 'ID', 'Áudio'],
+  PASTA_AUDIOS: 'Rádio do Rosimar — Áudios',
   TIPOS: ['Dedetização', 'Descupinização', "Limpeza de caixa d'água", 'Desratização',
           'Impermeabilização', 'Documento/análise', 'Venda de produto', 'Conserto de bomba', 'Outro'],
   SITUACOES: ['Realizado', 'A fazer', 'Pago', 'A receber']
@@ -28,6 +29,7 @@ function configurarRadio() {
     props.setProperty('CHAVE', chave);
   }
   radioGarantirAba_();
+  radioPastaAudios_(); // cria a pasta dos áudios (e pede a permissão do Drive na primeira vez)
   var url = String(RADIO.URL_APP || '').trim();
   if (!/^https:\/\/script\.google\.com\/.*\/exec$/.test(url)) {
     Logger.log('⚠ Falta o endereço publicado. Vá em Implantar → Gerenciar implantações, copie o "URL do app da Web" ' +
@@ -83,6 +85,7 @@ function radioChaveOk_(chave) {
 /** GET: ?acao=ping|clientes&chave=... */
 function doGet(e) {
   var p = (e && e.parameter) || {};
+  if (p.acao === 'ouvir') return radioPaginaAudio_(String(p.f || ''), String(p.t || ''));
   if (!radioChaveOk_(p.chave)) return radioResposta_({ ok: false, erro: 'chave' });
   if (p.acao === 'clientes') return radioResposta_({ ok: true, clientes: radioClientes_() });
   return radioResposta_({ ok: true, aba: RADIO.ABA });
@@ -130,6 +133,7 @@ function doPost(e) {
     }
     var gravados = [];
     var linhas = [];
+    var audios = [];
     registros.forEach(function (r) {
       var id = radioTexto_(r.id, 40);
       if (!id) return;
@@ -149,6 +153,7 @@ function doPost(e) {
         radioTexto_(r.alerta, 200),
         id
       ]);
+      audios.push(radioSalvarAudio_(r, id));
     });
     if (linhas.length) {
       var linha0 = aba.getLastRow() + 1;
@@ -157,13 +162,88 @@ function doPost(e) {
       aba.getRange(linha0, 2, linhas.length, 1).setNumberFormat('dd/MM/yyyy');
       aba.getRange(linha0, 4, linhas.length, 1).setNumberFormat('"R$" #,##0.00');
       linhas.forEach(function (l, i) {
-        if (l[9]) aba.getRange(linha0 + i, 1, 1, l.length).setBackground('#fff4cc');
+        if (l[9]) aba.getRange(linha0 + i, 1, 1, l.length + 1).setBackground('#fff4cc');
       });
+      aba.getRange(linha0, 12, linhas.length, 1).setFormulas(audios.map(function (a) { return [a]; }));
     }
     return radioResposta_({ ok: true, gravados: gravados });
   } finally {
     trava.releaseLock();
   }
+}
+
+// ---------- Áudios ----------
+
+/** Pasta dos áudios, ao lado da planilha. Guarda o id para não criar outra. */
+function radioPastaAudios_() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty('PASTA_AUDIOS');
+  if (id) { try { return DriveApp.getFolderById(id); } catch (e) { /* apagada: cria outra */ } }
+  var pai;
+  try {
+    var pais = DriveApp.getFileById(SpreadsheetApp.getActiveSpreadsheet().getId()).getParents();
+    pai = pais.hasNext() ? pais.next() : DriveApp.getRootFolder();
+  } catch (e) { pai = DriveApp.getRootFolder(); }
+  var pasta = pai.createFolder(RADIO.PASTA_AUDIOS);
+  props.setProperty('PASTA_AUDIOS', pasta.getId());
+  return pasta;
+}
+
+/** Senha própria dos links de áudio (não muda quando a chave dos celulares é trocada). */
+function radioToken_(fileId) {
+  var props = PropertiesService.getScriptProperties();
+  var seg = props.getProperty('CHAVE_AUDIO');
+  if (!seg) { seg = Utilities.getUuid() + Utilities.getUuid(); props.setProperty('CHAVE_AUDIO', seg); }
+  var assin = Utilities.computeHmacSha256Signature(fileId, seg);
+  return assin.slice(0, 12).map(function (b) { return ('0' + (b & 255).toString(16)).slice(-2); }).join('');
+}
+
+/** Salva o áudio do registro no Drive e devolve a fórmula "▶ Ouvir" (ou vazio). */
+function radioSalvarAudio_(r, id) {
+  try {
+    var a = r.audio;
+    if (!a || typeof a.b64 !== 'string' || !a.b64) return '';
+    var tipos = { 'audio/mp4': 'm4a', 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3' };
+    var mime = String(a.mime || '').split(';')[0];
+    if (!tipos[mime]) return '';
+    if (a.b64.length > 6000000) return '';
+    var bytes = Utilities.base64Decode(a.b64);
+    var nome = id + ' · ' + String(r.dataServico || '').slice(0, 10) + ' · ' +
+      String(r.cliente || 'sem cliente').replace(/[\\/:*?"<>|#]/g, ' ').slice(0, 60) + '.' + tipos[mime];
+    var arq = radioPastaAudios_().createFile(Utilities.newBlob(bytes, mime, nome));
+    arq.setDescription('Rádio do Rosimar · ID ' + id + ' · ' + radioTexto_(r.texto, 400));
+    var url = String(RADIO.URL_APP || '').trim() + '?acao=ouvir&f=' + arq.getId() + '&t=' + radioToken_(arq.getId());
+    return '=HYPERLINK("' + url + '","▶ Ouvir")';
+  } catch (err) {
+    return '';
+  }
+}
+
+/** Página que toca o áudio (abre ao clicar em ▶ Ouvir). */
+function radioPaginaAudio_(fileId, token) {
+  var html;
+  if (!/^[\w-]{10,}$/.test(fileId) || token !== radioToken_(fileId)) {
+    html = '<p style="font:20px sans-serif">Link de áudio inválido.</p>';
+  } else {
+    try {
+      var arq = DriveApp.getFileById(fileId);
+      var blob = arq.getBlob();
+      var mime = blob.getContentType();
+      var b64 = Utilities.base64Encode(blob.getBytes());
+      var nome = arq.getName().replace(/[<>&"]/g, '');
+      var desc = String(arq.getDescription() || '').replace(/[<>&"]/g, '');
+      html = '<div style="font-family:sans-serif;max-width:560px;margin:24px auto;padding:0 16px">' +
+        '<h2 style="margin:0 0 6px">📡 Áudio do registro</h2>' +
+        '<p style="color:#555;margin:0 0 18px">' + nome + '</p>' +
+        '<audio controls autoplay style="width:100%" src="data:' + mime + ';base64,' + b64 + '"></audio>' +
+        '<p style="color:#555;font-size:14px;margin-top:18px">' + desc + '</p>' +
+        '<p><a href="' + arq.getUrl() + '" target="_blank">Abrir no Drive</a></p></div>';
+    } catch (err) {
+      html = '<p style="font:20px sans-serif">Áudio não encontrado (pode ter sido apagado).</p>';
+    }
+  }
+  return HtmlService.createHtmlOutput(html).setTitle('Áudio · Rádio do Rosimar')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
 /** Texto seguro: corta o tamanho e impede fórmula começando com = + - @ */
