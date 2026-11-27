@@ -64,6 +64,18 @@
       .trim();
   }
 
+  /** Mesmos cortes do normalizar(), mas mantendo acentos e maiúsculas (para o nome de cliente novo). */
+  function palavrasOriginais(s) {
+    return String(s || '')
+      .replace(/R\$\s*/gi, ' r$ ')
+      .replace(/[^0-9$.,/: A-Za-zÀ-ÖØ-öø-ÿ]+/g, ' ')
+      .replace(/:(?!\d)/g, ' ')
+      .replace(/([A-Za-zÀ-ÖØ-öø-ÿ])[.,]+(?=\s|$)/g, '$1')
+      .replace(/[.,]+(?=\s|$)/g, '')
+      .replace(/\s+/g, ' ')
+      .trim().split(' ');
+  }
+
   function numeroDeDigitos(tok) {
     if (!/^\d[\d.,]*$/.test(tok)) return null;
     var t = tok;
@@ -345,7 +357,15 @@
       var sobra = toks.filter(function (tk, idx) {
         return !usado[idx] && !ENCHIMENTO_SET[tk] && !/^\d[\d.,/]*$/.test(tk) && !ehPalavraNumero(tk) && tk !== 'feira';
       });
-      if (sobra.length) r.cliente = capitalizar(sobra.join(' '));
+      if (sobra.length) {
+        var orig = palavrasOriginais(texto);
+        var iguais = orig.length === toks.length;
+        var nomes = [];
+        toks.forEach(function (tk, idx) {
+          if (sobra.indexOf(tk) >= 0 && !usado[idx] && !ENCHIMENTO_SET[tk]) nomes.push(iguais ? orig[idx] : tk);
+        });
+        r.cliente = capitalizar(nomes.join(' ').toLowerCase());
+      }
     }
 
     r.faltando = [];
@@ -393,8 +413,11 @@
   function entenderCliente(texto, clientes) {
     var b = acharCliente(texto, clientes);
     if (b) return { cliente: b.nome, clienteBase: true };
-    var sobra = normalizar(texto).split(' ').filter(function (t) { return t && !ENCHIMENTO_SET[t]; });
-    return { cliente: capitalizar(sobra.join(' ')), clienteBase: false };
+    var tk = normalizar(texto).split(' ');
+    var orig = palavrasOriginais(texto);
+    var nomes = [];
+    tk.forEach(function (t, i) { if (t && !ENCHIMENTO_SET[t]) nomes.push(orig.length === tk.length ? orig[i] : t); });
+    return { cliente: capitalizar(nomes.join(' ').toLowerCase()), clienteBase: false };
   }
 
   /** "sim" / "não" / null */

@@ -420,6 +420,8 @@
       var mudos = LS.get('radio_mudo_seguidos', 0) + 1;
       LS.set('radio_mudo_seguidos', mudos);
       if (mudos >= 2) LS.set('radio_sem_audio', true); // este celular não grava junto com o reconhecimento
+    } else if (modoDigitar()) {
+      alertas.push('Digitado (teste)');
     } else if (LS.get('radio_sem_audio', false)) {
       alertas.push('Sem áudio (este celular não grava junto)');
     }

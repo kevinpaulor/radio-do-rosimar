@@ -177,9 +177,10 @@ function doPost(e) {
       linhas.forEach(function (l, i) {
         if (l[9]) aba.getRange(linha0 + i, 1, 1, l.length + 1).setBackground('#fff4cc');
       });
-      aba.getRange(linha0, 12, linhas.length, 1).setFormulas(audios.map(function (a) { return [a]; }));
+      // Links como texto com link (funciona em planilha em português ou inglês; fórmula daria #ERROR!)
+      aba.getRange(linha0, 12, linhas.length, 1).setRichTextValues(audios.map(function (u) { return [radioLink_('▶ Ouvir', u)]; }));
       aba.getRange(linha0, 13, linhas.length, 1).setNumberFormat('@').setValues(extras.map(function (x) { return [x[0]]; }));
-      aba.getRange(linha0, 14, linhas.length, 1).setFormulas(extras.map(function (x) { return [x[1]]; }));
+      aba.getRange(linha0, 14, linhas.length, 1).setRichTextValues(extras.map(function (x) { return [radioLink_('📅 Ver', x[1])]; }));
     }
     return radioResposta_({ ok: true, gravados: gravados });
   } finally {
@@ -228,7 +229,7 @@ function radioSalvarAudio_(r, id) {
     var arq = radioPastaAudios_().createFile(Utilities.newBlob(bytes, mime, nome));
     arq.setDescription('Rádio do Rosimar · ID ' + id + ' · ' + radioTexto_(r.texto, 400));
     var url = String(RADIO.URL_APP || '').trim() + '?acao=ouvir&f=' + arq.getId() + '&t=' + radioToken_(arq.getId());
-    return '=HYPERLINK("' + url + '","▶ Ouvir")';
+    return url;
   } catch (err) {
     return '';
   }
@@ -295,7 +296,7 @@ function radioInfoCliente_(nome) {
 }
 
 /** Cria o evento na agenda quando o serviço é "A fazer". Devolve a fórmula "📅 Ver" (ou vazio). */
-function radioCriarEvento_(r, id, hora, formulaAudio) {
+function radioCriarEvento_(r, id, hora, urlAudio) {
   try {
     if (r.situacao !== 'A fazer') return '';
     var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(r.dataServico || ''));
@@ -313,8 +314,7 @@ function radioCriarEvento_(r, id, hora, formulaAudio) {
       'Registrado por: ' + radioTexto_(r.quem, 40),
       'ID: ' + id
     ];
-    var urlAudio = /"(https:[^"]+)"/.exec(formulaAudio || '');
-    if (urlAudio) linhasDesc.push('Áudio: ' + urlAudio[1]);
+    if (urlAudio) linhasDesc.push('Áudio: ' + urlAudio);
     var opcoes = { description: linhasDesc.filter(String).join('\n'), location: info.endereco || '' };
     var ev;
     if (hora) {
@@ -327,10 +327,16 @@ function radioCriarEvento_(r, id, hora, formulaAudio) {
       ev = cal.createAllDayEvent(titulo, dia, opcoes);
     }
     var eid = Utilities.base64EncodeWebSafe(ev.getId().split('@')[0] + ' ' + cal.getId()).replace(/=+$/, '');
-    return '=HYPERLINK("https://www.google.com/calendar/event?eid=' + eid + '","📅 Ver")';
+    return 'https://www.google.com/calendar/event?eid=' + eid;
   } catch (err) {
     return '';
   }
+}
+
+/** Célula com texto clicável (ou vazia). */
+function radioLink_(texto, url) {
+  if (!url) return SpreadsheetApp.newRichTextValue().setText('').build();
+  return SpreadsheetApp.newRichTextValue().setText(texto).setLinkUrl(url).build();
 }
 
 /** Texto seguro: corta o tamanho e impede fórmula começando com = + - @ */
