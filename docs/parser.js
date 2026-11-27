@@ -280,8 +280,16 @@
     });
     if (data) { r.dataServico = iso(data); r.dataFalada = true; }
 
-    // Valor: o número marcado com "reais"/"R$"; senão o maior que não é data.
-    var candidatos = nums.filter(function (n) { return !n.data; });
+    // Cliente da base primeiro: um número que faz parte do nome ("sete Apóstolos", "Ponto 87") não é o valor.
+    var naBase = acharCliente(texto, opcoes.clientes);
+    var numerosDoNome = {};
+    if (naBase) {
+      var tn = normalizar(naBase.nome).split(' ');
+      acharNumeros(tn).forEach(function (n) { numerosDoNome[n.valor] = true; });
+      tn.forEach(function (t) { var m = /\d+/.exec(t); if (m) numerosDoNome[+m[0]] = true; });
+    }
+    // Valor: o número marcado com "reais"/"R$"; senão o maior que não é data nem parte do nome.
+    var candidatos = nums.filter(function (n) { return !n.data && !numerosDoNome[n.valor]; });
     var marcado = candidatos.filter(function (n) {
       return toks[n.ini - 1] === 'r$' || toks[n.fim - 1] === 'reais' || toks[n.fim] === 'reais' || toks[n.fim] === 'real' || toks[n.fim - 1] === 'centavos';
     });
@@ -293,7 +301,6 @@
     }
 
     // Cliente: primeiro procura na base; senão, o que sobrou da frase.
-    var naBase = acharCliente(texto, opcoes.clientes);
     if (naBase) { r.cliente = naBase.nome; r.clienteBase = true; r.clienteNota = naBase.nota; }
     else {
       var sobra = toks.filter(function (tk, idx) {
