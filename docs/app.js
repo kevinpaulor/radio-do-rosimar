@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   var P = window.RadioParser;
-  var VERSAO = 22, VERSAO_DATA = '28/11/2026 02:22'; // atualizado a cada publicação
+  var VERSAO = 23, VERSAO_DATA = '28/11/2026 02:25'; // atualizado a cada publicação
   var $ = function (id) { return document.getElementById(id); };
   var LS = {
     get: function (k, padrao) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : padrao; } catch (e) { return padrao; } },
@@ -107,17 +107,21 @@
       if (!Ctx) return Promise.resolve();
       if (!ctxBip) ctxBip = new Ctx();
       if (ctxBip.state === 'suspended') ctxBip.resume();
-      var o = ctxBip.createOscillator(), g = ctxBip.createGain(), t = ctxBip.currentTime;
-      o.type = 'sine';
-      o.frequency.setValueAtTime(tipo === 'inicio' ? 880 : 520, t);
-      o.frequency.linearRampToValueAtTime(tipo === 'inicio' ? 1320 : 360, t + 0.09);
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.25, t + 0.015);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
-      o.connect(g); g.connect(ctxBip.destination);
-      o.start(t); o.stop(t + 0.12);
+      var t = ctxBip.currentTime;
+      // início: dois toques subindo; fim: um toque descendo. Onda quadrada suave = mais alto no alto-falante do celular.
+      var notas = tipo === 'inicio' ? [[880, 0], [1320, 0.13]] : [[700, 0], [440, 0.12]];
+      notas.forEach(function (n) {
+        var o = ctxBip.createOscillator(), g = ctxBip.createGain();
+        o.type = 'square';
+        o.frequency.setValueAtTime(n[0], t + n[1]);
+        g.gain.setValueAtTime(0.0001, t + n[1]);
+        g.gain.exponentialRampToValueAtTime(0.6, t + n[1] + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + n[1] + 0.12);
+        o.connect(g); g.connect(ctxBip.destination);
+        o.start(t + n[1]); o.stop(t + n[1] + 0.13);
+      });
     } catch (e) { /* sem som: segue */ }
-    return new Promise(function (r) { setTimeout(r, tipo === 'inicio' ? 130 : 0); });
+    return new Promise(function (r) { setTimeout(r, tipo === 'inicio' ? 280 : 0); });
   }
 
   // ---------- Voz: ouvir ----------
