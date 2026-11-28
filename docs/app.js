@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   var P = window.RadioParser;
-  var VERSAO = 20, VERSAO_DATA = '28/11/2026 02:12'; // atualizado a cada publicação
+  var VERSAO = 21, VERSAO_DATA = '28/11/2026 02:18'; // atualizado a cada publicação
   var $ = function (id) { return document.getElementById(id); };
   var LS = {
     get: function (k, padrao) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : padrao; } catch (e) { return padrao; } },
@@ -92,7 +92,7 @@
       if (vozPt) u.voice = vozPt;
       u.rate = 1.0;
       var feito = false;
-      var fim = function () { if (!feito) { feito = true; setTimeout(resolve, 250); } };
+      var fim = function () { if (!feito) { feito = true; setTimeout(resolve, 120); } };
       u.onend = fim; u.onerror = fim;
       setTimeout(fim, 1500 + texto.length * 90); // se o aparelho não avisar o fim
       speechSynthesis.speak(u);
@@ -132,15 +132,20 @@
   var algumDigitado = false;
   function mostrarCaixa(ligada) {
     var box = $('respostaDigitada');
-    if (ligada) { // logo abaixo da pergunta, para o teclado não cobrir
-      var titulo = document.querySelector('#tela-' + tela + ' .grande');
-      if (titulo && titulo.nextSibling !== box) titulo.parentNode.insertBefore(box, titulo.nextSibling);
+    var soTexto = modo() === 'texto';
+    if (ligada) {
+      var secao = document.querySelector('#tela-' + tela);
+      if (soTexto) { // só texto: logo abaixo da pergunta, já com o teclado aberto
+        var titulo = secao && secao.querySelector('.grande');
+        if (titulo && titulo.nextSibling !== box) titulo.parentNode.insertBefore(box, titulo.nextSibling);
+      } else if (secao && box.parentNode !== secao) { // voz e texto: no fim da tela, sem abrir o teclado
+        secao.appendChild(box);
+      }
+      $('campoResposta').value = '';
+      $('campoResposta').placeholder = soTexto ? 'Digite a resposta' : 'Ou toque aqui para digitar';
     }
     box.style.display = ligada ? 'flex' : 'none';
-    if (ligada) {
-      $('campoResposta').value = '';
-      setTimeout(function () { try { $('campoResposta').focus(); } catch (e) { /* nada */ } }, 50);
-    }
+    if (ligada && soTexto) setTimeout(function () { try { $('campoResposta').focus(); } catch (e) { /* nada */ } }, 50);
   }
   function entregarDigitado(texto) {
     var d = digitando; digitando = null;
@@ -195,7 +200,10 @@
         if (recAtual === rec) recAtual = null;
         fim((final || parcial).trim());
       };
-      try { rec.start(); } catch (e) { clearTimeout(limite); reject(e); }
+      var trilha = grav && grav.stream && grav.stream.getAudioTracks()[0];
+      var foi = false;
+      if (trilha) { try { rec.start(trilha); foi = true; grav.compartilhado = true; } catch (e) { /* Chrome antigo: não aceita */ } }
+      if (!foi) { try { rec.start(); } catch (e) { clearTimeout(limite); reject(e); } }
     });
   }
   function pararDeOuvir() {
@@ -208,7 +216,8 @@
     descartarGravacao();
     // No modo digitado não há reconhecimento disputando o microfone: grava sempre (para testar o áudio).
     var aj = ajustes();
-    if (aj.modo !== 'texto' && (!aj.gravarJunto || LS.get('radio_sem_audio', false))) return; // voz: microfone livre para o reconhecimento
+    // voz: só grava se o experimental estiver ligado e este celular não tiver falhado antes
+    if (aj.modo !== 'texto' && (!aj.gravarJunto || LS.get('radio_sem_audio', false))) return;
     if (!window.MediaRecorder || !navigator.mediaDevices) return;
     try {
       // Sem cancelamento de eco: no Android ele coloca o celular em "modo ligação" e a voz do app fica baixa ou some.
