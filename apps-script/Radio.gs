@@ -458,15 +458,15 @@ function radioInfoCliente_(nome) {
   return {};
 }
 
-/** Cria o evento na agenda quando o serviço é "A fazer". Devolve a fórmula "📅 Ver" (ou vazio). */
+/** Cria o evento na agenda (todos os registros). Devolve o link do evento (ou vazio). */
 function radioCriarEvento_(r, id, hora, urlAudio) {
   try {
-    if (r.situacao !== 'A fazer') return '';
+    var feito = r.situacao !== 'A fazer'; // todos vão para a agenda; os já feitos ficam cinza, com ✔ e sem lembrete
     var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(r.dataServico || ''));
     if (!m) return '';
     var cal = radioAgenda_();
     var cliente = radioTexto_(r.cliente, 120) || 'sem cliente';
-    var titulo = (radioTexto_(r.tipo, 60) || 'Serviço') + ' · ' + cliente;
+    var titulo = (feito ? '✔ ' : '') + (radioTexto_(r.tipo, 60) || 'Serviço') + ' · ' + cliente;
     var info = radioInfoCliente_(r.cliente);
     var valor = radioValor_(r.valor);
     var linhasDesc = [
@@ -484,11 +484,12 @@ function radioCriarEvento_(r, id, hora, urlAudio) {
       var ini = Utilities.parseDate(r.dataServico + ' ' + hora, RADIO.FUSO, 'yyyy-MM-dd HH:mm');
       var fim = new Date(ini.getTime() + RADIO.DURACAO_HORAS * 3600000);
       ev = cal.createEvent(titulo, ini, fim, opcoes);
-      ev.addPopupReminder(60);
+      if (!feito) ev.addPopupReminder(60);
     } else {
       var dia = Utilities.parseDate(r.dataServico + ' 12:00', RADIO.FUSO, 'yyyy-MM-dd HH:mm');
       ev = cal.createAllDayEvent(titulo, dia, opcoes);
     }
+    if (feito) { ev.removeAllReminders(); ev.setColor(CalendarApp.EventColor.GRAY); }
     var eid = Utilities.base64EncodeWebSafe(ev.getId().split('@')[0] + ' ' + cal.getId()).replace(/=+$/, '');
     return 'https://www.google.com/calendar/event?eid=' + eid;
   } catch (err) {
