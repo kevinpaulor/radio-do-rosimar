@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   var P = window.RadioParser;
-  var VERSAO = 23, VERSAO_DATA = '28/11/2026 02:25'; // atualizado a cada publicação
+  var VERSAO = 24, VERSAO_DATA = '28/11/2026 02:34'; // atualizado a cada publicação
   var $ = function (id) { return document.getElementById(id); };
   var LS = {
     get: function (k, padrao) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : padrao; } catch (e) { return padrao; } },
@@ -143,7 +143,7 @@
     var ordem = Array.isArray(a.ordem) ? a.ordem.filter(function (c) { return CAMPOS[c]; }) : [];
     ORDEM_PADRAO.forEach(function (c) { if (ordem.indexOf(c) < 0) ordem.push(c); });
     return {
-      modo: ['voz', 'texto', 'ambos'].indexOf(a.modo) >= 0 ? a.modo : (teste ? 'ambos' : 'voz'),
+      modo: ['voz', 'texto', 'ambos', 'ia'].indexOf(a.modo) >= 0 ? a.modo : (teste ? 'ambos' : 'voz'),
       ordem: ordem,
       endereco: ['sempre', 'novo', 'nunca'].indexOf(a.endereco) >= 0 ? a.endereco : 'novo',
       gravarJunto: a.gravarJunto === true // experimental: no Android pode ocupar o microfone e o reconhecimento não ouve
@@ -181,6 +181,7 @@
   function ouvir(opcoes) {
     opcoes = opcoes || {};
     var m = modo();
+    if (m === 'ia') m = 'voz'; // no modo IA, o "sim/não" do fim usa o reconhecimento normal (a gravação já parou)
     if (m === 'texto') {
       return new Promise(function (resolve) {
         digitando = { resolve: function (t) { if (t) algumDigitado = true; resolve(t); } };
@@ -245,6 +246,7 @@
     // No modo digitado não há reconhecimento disputando o microfone: grava sempre (para testar o áudio).
     var aj = ajustes();
     // voz: só grava se o experimental estiver ligado e este celular não tiver falhado antes
+    if (aj.modo === 'ia') return; // o modo IA tem gravação própria (WAV)
     if (aj.modo !== 'texto' && (!aj.gravarJunto || LS.get('radio_sem_audio', false))) return;
     if (!window.MediaRecorder || !navigator.mediaDevices) return;
     try {
@@ -311,6 +313,8 @@
 
   function cancelarTudo() {
     descartarGravacao();
+    if (ia && ia.parar) ia.parar();
+    fecharMicrofoneIA();
     if (digitando) entregarDigitado('');
     fluxo++;
     if (recAtual) { try { recAtual.abort(); } catch (e) { /* nada */ } recAtual = null; }
@@ -374,8 +378,136 @@
     }
   }
 
-  var audioAtual = null;
-  async function registrar() {
+  /** Coloca no registro o que uma resposta trouxe (serve para voz, texto e IA). */
+  function aplicarResposta(r, campo, resp, clientes) {
+    if (PULAR.test(resp.trim())) {
+      if (campo === 'valor') r.valorPulado = true;
+      if (campo === 'endereco') r.enderecoPulado = true;
+      if (campo === 'dia') r.diaOk = true; // fica hoje
+      return;
+    }
+    var novo = P.entender(resp, { clientes: clientes });
+    if (campo === 'cliente' && !novo.clienteBase) {
+      var c = P.entenderCliente(resp, clientes);
+      // se a resposta trouxe mais coisas (serviço, valor), o nome é o que sobrou; senão é a frase inteira
+      if (!(novo.tipo || novo.valor || novo.dataFalada)) { novo.cliente = c.cliente; novo.clienteBase = c.clienteBase; }
+      var achado = P.acharCliente(resp, clientes);
+      novo.clienteNota = achado ? achado.nota : 0;
+    }
+    if (campo === 'servico' && !novo.tipo) novo.tipo = P.entenderTipo(resp);
+    if (campo === 'valor' && !novo.valor) novo.valor = P.entenderValor(resp);
+    if (campo === 'endereco') { r.endereco = resp.trim().slice(0, 200); return; }
+    juntar(r, novo, campo);
+    if (campo === 'dia' && !r.diaOk) r.diaOk = true; // respondeu algo que não é data: fica hoje
+  }
+  function fecharRegistro(r, hoje) {
+    // situação: o que foi dito em qualquer resposta ("marcado", "já pagou"...) ou data futura
+    var tudo = P.entender(falas.join(' . '), { clientes: [] });
+    if (!r.situacao && tudo.situacao) r.situacao = tudo.situacao;
+    if (!r.situacao && (r.hora || r.dataServico > hoje)) r.situacao = 'A fazer';
+    r.texto = falas.join(' | ');
+  }
+  function registroVazio(hoje) {
+    return { cliente: '', clienteBase: false, tipo: '', valor: null, dataServico: hoje, diaOk: false, hora: '',
+      situacao: '', endereco: '', enderecoPulado: false, valorPulado: false };
+  }
+  function precisaPerguntar(r, campo, aj) {
+    if (campo === 'cliente') return !r.cliente;
+    if (campo === 'servico') return !r.tipo;
+    if (campo === 'dia') return !r.diaOk;
+    if (campo === 'valor') return !r.valor && !r.valorPulado;
+    if (campo === 'endereco') {
+      if (aj.endereco === 'nunca' || r.endereco) return false;
+      if (aj.endereco === 'novo' && (r.clienteBase || !r.cliente)) { r.enderecoPulado = true; return false; }
+      return true;
+    }
+    return false;
+  }
+
+  // ---------- Modo "Voz com áudio (IA)": grava cada resposta em WAV e a IA transcreve ----------
+  var ia = null; // { ctx, stream, fonte, proc, taxa }
+  async function abrirMicrofoneIA() {
+    var stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true } });
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    var ctx = new Ctx();
+    if (ctx.state === 'suspended') { try { await ctx.resume(); } catch (e) { /* nada */ } }
+    ia = { ctx: ctx, stream: stream, fonte: ctx.createMediaStreamSource(stream), taxa: ctx.sampleRate };
+  }
+  function fecharMicrofoneIA() {
+    if (!ia) return;
+    try { ia.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* nada */ }
+    try { ia.ctx.close(); } catch (e) { /* nada */ }
+    ia = null;
+  }
+  /** Grava uma resposta: começa quando ouve voz, para depois de ~1,3 s de silêncio (ou 7 s sem ninguém falar). */
+  function gravarClipe() {
+    return new Promise(function (resolve) {
+      if (!ia) return resolve(null);
+      var proc = ia.ctx.createScriptProcessor(4096, 1, 1);
+      var pedacos = [], inicio = Date.now(), falou = false, ultimoSom = 0, ruido = null, amostrasRuido = [];
+      var acabou = false;
+      var fim = function () {
+        if (acabou) return; acabou = true;
+        try { ia.fonte.disconnect(proc); proc.disconnect(); } catch (e) { /* nada */ }
+        resolve({ pedacos: pedacos, taxa: ia ? ia.taxa : 48000, falou: falou });
+      };
+      ia.parar = fim;
+      proc.onaudioprocess = function (ev) {
+        var d = ev.inputBuffer.getChannelData(0);
+        pedacos.push(new Float32Array(d));
+        var soma = 0; for (var i = 0; i < d.length; i++) soma += d[i] * d[i];
+        var rms = Math.sqrt(soma / d.length), agora = Date.now();
+        if (agora - inicio < 300) amostrasRuido.push(rms);
+        else if (ruido === null) ruido = amostrasRuido.length ? Math.min.apply(null, amostrasRuido) : 0.005; // o mais baixo = fundo
+        // limite de "voz": acima do fundo, mas nunca alto demais (se ele já começou a falar logo no bip)
+        var limiar = Math.min(0.06, Math.max(0.015, (ruido === null ? 0.005 : ruido) * 3));
+        if (rms > limiar) { falou = true; ultimoSom = agora; }
+        if (falou && agora - ultimoSom > 1300) fim();
+        else if (!falou && agora - inicio > 7000) fim();
+        else if (agora - inicio > 20000) fim();
+      };
+      ia.fonte.connect(proc); proc.connect(ia.ctx.destination);
+    });
+  }
+  /** Junta pedaços, reduz para 16 kHz e devolve os bytes de um WAV mono 16 bits. */
+  function paraWav(clipes) {
+    var alvo = 16000, amostras = [];
+    clipes.forEach(function (c, n) {
+      if (!c) return;
+      var passo = c.taxa / alvo, total = 0;
+      c.pedacos.forEach(function (p) { total += p.length; });
+      var tudo = new Float32Array(total), pos = 0;
+      c.pedacos.forEach(function (p) { tudo.set(p, pos); pos += p.length; });
+      for (var i = 0; i < tudo.length; i += passo) {
+        var a = Math.floor(i), b = Math.min(tudo.length, Math.floor(i + passo)), soma = 0;
+        for (var j = a; j < b; j++) soma += tudo[j];
+        amostras.push(b > a ? soma / (b - a) : 0);
+      }
+      if (n < clipes.length - 1) for (var k = 0; k < alvo * 0.35; k++) amostras.push(0); // pausa entre respostas
+    });
+    var buf = new ArrayBuffer(44 + amostras.length * 2), v = new DataView(buf);
+    var escreve = function (o, t) { for (var i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+    escreve(0, 'RIFF'); v.setUint32(4, 36 + amostras.length * 2, true); escreve(8, 'WAVE'); escreve(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, alvo, true);
+    v.setUint32(28, alvo * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); escreve(36, 'data');
+    v.setUint32(40, amostras.length * 2, true);
+    for (var i = 0; i < amostras.length; i++) {
+      var x = Math.max(-1, Math.min(1, amostras[i]));
+      v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true);
+    }
+    return new Blob([buf], { type: 'audio/wav' });
+  }
+  async function transcrever(clipes, clientes) {
+    var audios = [];
+    for (var i = 0; i < clipes.length; i++) audios.push({ mime: 'audio/wav', b64: await paraBase64(paraWav([clipes[i]])) });
+    var resp = await fetch(cfg.url, { method: 'POST', body: JSON.stringify({ chave: cfg.chave, acao: 'transcrever', audios: audios,
+      nomes: clientes.map(function (c) { return c.nome; }) }) });
+    var json = await resp.json();
+    if (!json.ok) { if (json.erro === 'chave') chaveRevogada(); throw new Error(json.erro === 'sem-chave-gemini' ? 'sem-chave-gemini' : 'ia-falhou'); }
+    return json.textos || [];
+  }
+
+  async function registrarIA() {
     cancelarTudo();
     var meu = fluxo;
     falas = [];
@@ -384,8 +516,84 @@
     var aj = ajustes();
     var clientes = LS.get('radio_clientes', []);
     var hoje = P.entender('', {}).dataServico;
-    var r = { cliente: '', clienteBase: false, tipo: '', valor: null, dataServico: hoje, diaOk: false, hora: '',
-      situacao: '', endereco: '', enderecoPulado: false, valorPulado: false };
+    var r = registroVazio(hoje);
+    var clipes = [];            // { campo, clipe }
+    var primeira = null;        // transcrição do 1º áudio, em segundo plano
+    var falhaIA = '';
+    try {
+      await abrirMicrofoneIA();
+      for (var i = 0; i < aj.ordem.length; i++) {
+        var campo = aj.ordem[i];
+        if (meu !== fluxo) return fecharMicrofoneIA();
+        if (campo === 'endereco' && aj.endereco === 'novo' && primeira) { // precisa saber se o cliente é novo
+          mostrar('ouvindo'); $('tituloOuvindo').textContent = 'Um instante…'; desenharProgresso(r, campo, aj.ordem);
+          await primeira.catch(function () {});
+        }
+        if (!precisaPerguntar(r, campo, aj)) continue;
+        await perguntarNaTela(CAMPOS[campo].pergunta, r, campo, aj.ordem, CAMPOS[campo].fala);
+        if (meu !== fluxo) return fecharMicrofoneIA();
+        await bip('inicio');
+        var clipe = await gravarClipe();
+        bip('fim');
+        if (meu !== fluxo) return fecharMicrofoneIA();
+        if (!clipe || !clipe.falou) {
+          if (i === 0 && !clipes.length) { fecharMicrofoneIA(); mostrar('inicio'); await falar('Não ouvi. Aperte de novo.'); return; }
+          continue;
+        }
+        clipes.push({ campo: campo, clipe: clipe });
+        if (!primeira) { // manda o 1º áudio para a IA já, enquanto faz as outras perguntas
+          primeira = transcrever([clipe], clientes).then(function (t) {
+            clipes[0].texto = t[0] || '';
+            if (clipes[0].texto) aplicarResposta(r, clipes[0].campo, clipes[0].texto, clientes);
+          }).catch(function (e) { falhaIA = e.message; });
+        }
+      }
+      fecharMicrofoneIA();
+      // o resto vai junto, de uma vez
+      mostrar('ouvindo'); $('tituloOuvindo').textContent = 'Entendendo…'; $('parcial').textContent = '';
+      desenharProgresso(r, '', aj.ordem);
+      if (primeira) await primeira;
+      var resto = clipes.slice(1);
+      if (resto.length && !falhaIA) {
+        try {
+          var textos = await transcrever(resto.map(function (c) { return c.clipe; }), clientes);
+          resto.forEach(function (c, k) { c.texto = textos[k] || ''; });
+        } catch (e) { falhaIA = e.message; }
+      }
+      if (meu !== fluxo) return;
+      clipes.forEach(function (c, k) {
+        if (!c.texto) return;
+        falas.push(c.texto);
+        if (k > 0) aplicarResposta(r, c.campo, c.texto, clientes);
+      });
+      fecharRegistro(r, hoje);
+      r.falhaIA = falhaIA;
+      audioAtual = clipes.length ? { blob: paraWav(clipes.map(function (c) { return c.clipe; })), mime: 'audio/wav', silencioso: false,
+        segundos: Math.round(clipes.reduce(function (t, c) { return t + c.clipe.pedacos.length * 4096 / c.clipe.taxa; }, 0)) } : null;
+      if (falhaIA) {
+        await falar(falhaIA === 'sem-chave-gemini' ? 'IA sem chave. Grave pelo modo rápido.' : 'Não entendi agora. O áudio fica salvo.');
+      }
+      atual = r;
+      await confirmar(meu);
+    } catch (e) {
+      fecharMicrofoneIA();
+      if (meu !== fluxo) return;
+      erro(e);
+    }
+  }
+
+  var audioAtual = null;
+  async function registrar() {
+    if (modo() === 'ia') return registrarIA();
+    cancelarTudo();
+    var meu = fluxo;
+    falas = [];
+    audioAtual = null;
+    algumDigitado = false;
+    var aj = ajustes();
+    var clientes = LS.get('radio_clientes', []);
+    var hoje = P.entender('', {}).dataServico;
+    var r = registroVazio(hoje);
     var gravacaoTentada = false, gravando = false;
     try {
       for (var i = 0; i < aj.ordem.length; i++) {
@@ -434,31 +642,9 @@
           continue; // segue para a próxima pergunta; o que faltar aparece na confirmação
         }
         falas.push(resp);
-        if (PULAR.test(resp.trim())) {
-          if (campo === 'valor') r.valorPulado = true;
-          if (campo === 'endereco') r.enderecoPulado = true;
-          if (campo === 'dia') r.diaOk = true; // fica hoje
-          continue;
-        }
-        var novo = P.entender(resp, { clientes: clientes });
-        if (campo === 'cliente' && !novo.clienteBase) {
-          var c = P.entenderCliente(resp, clientes);
-          // se a resposta trouxe mais coisas (serviço, valor), o nome é o que sobrou; senão é a frase inteira
-          if (!(novo.tipo || novo.valor || novo.dataFalada)) { novo.cliente = c.cliente; novo.clienteBase = c.clienteBase; }
-          var achado = P.acharCliente(resp, clientes);
-          novo.clienteNota = achado ? achado.nota : 0;
-        }
-        if (campo === 'servico' && !novo.tipo) novo.tipo = P.entenderTipo(resp);
-        if (campo === 'valor' && !novo.valor) novo.valor = P.entenderValor(resp);
-        if (campo === 'endereco') { r.endereco = resp.trim().slice(0, 200); continue; }
-        juntar(r, novo, campo);
-        if (campo === 'dia' && !r.diaOk) r.diaOk = true; // respondeu algo que não é data: fica hoje
+        aplicarResposta(r, campo, resp, clientes);
       }
-      // situação: o que foi dito em qualquer resposta ("marcado", "já pagou"...) ou data futura
-      var tudo = P.entender(falas.join(' . '), { clientes: [] });
-      if (!r.situacao && tudo.situacao) r.situacao = tudo.situacao;
-      if (!r.situacao && (r.hora || r.dataServico > hoje)) r.situacao = 'A fazer';
-      r.texto = falas.join(' | ');
+      fecharRegistro(r, hoje);
       audioAtual = await pararGravacao();
       if (meu !== fluxo) return;
       atual = r;
@@ -536,6 +722,7 @@
     else if (r.clienteNota && r.clienteNota < 0.85) alertas.push('Conferir o cliente');
     if (!r.valor) alertas.push('Sem valor');
     if (!r.tipo) alertas.push('Sem tipo de serviço');
+    if (r.falhaIA) alertas.push(r.falhaIA === 'sem-chave-gemini' ? 'IA sem chave: ouvir o áudio' : 'IA não transcreveu: ouvir o áudio');
     var audio = audioAtual;
     audioAtual = null;
     var audioB64 = '';
@@ -735,7 +922,8 @@
   $('btnFecharAjustes').addEventListener('click', function () { mostrar(voltarPara); atualizarDica(); });
   function atualizarDica() {
     var a = ajustes();
-    var m = { voz: 'Aperte e responda falando.', texto: 'Aperte e responda digitando.', ambos: 'Aperte e responda falando ou digitando.' }[a.modo];
+    var m = { voz: 'Aperte e responda falando.', texto: 'Aperte e responda digitando.', ambos: 'Aperte e responda falando ou digitando.',
+      ia: 'Aperte e responda falando (com áudio).' }[a.modo];
     $('dica').textContent = m + ' Primeiro: ' + CAMPOS[a.ordem[0]].rotulo.toLowerCase() + '.';
   }
 

@@ -18,6 +18,9 @@ var RADIO = {
   AGENDA: 'Serviços do Rosimar',
   FUSO: 'America/Sao_Paulo',
   DURACAO_HORAS: 2,
+  // IA que transcreve os áudios no modo "Voz com áudio (IA)". A chave fica em
+  // Configurações do projeto → Propriedades do script → GEMINI_KEY (nunca no código).
+  GEMINI_MODELOS: ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash'],
   TIPOS: ['Dedetização', 'Descupinização', "Limpeza de caixa d'água", 'Desratização',
           'Impermeabilização', 'Documento/análise', 'Venda de produto', 'Conserto de bomba', 'Outro'],
   SITUACOES: ['Realizado', 'A fazer', 'Pago', 'A receber']
@@ -128,6 +131,7 @@ function doPost(e) {
   var corpo;
   try { corpo = JSON.parse(e.postData.contents); } catch (err) { return radioResposta_({ ok: false, erro: 'json' }); }
   if (!radioChaveOk_(corpo.chave)) return radioResposta_({ ok: false, erro: 'chave' });
+  if (corpo.acao === 'transcrever') return radioResposta_(radioTranscrever_(corpo.audios, corpo.nomes));
   var registros = Array.isArray(corpo.registros) ? corpo.registros.slice(0, 50) : [];
 
   var trava = LockService.getScriptLock();
@@ -220,7 +224,7 @@ function radioSalvarAudio_(r, id) {
   try {
     var a = r.audio;
     if (!a || typeof a.b64 !== 'string' || !a.b64) return '';
-    var tipos = { 'audio/mp4': 'm4a', 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3' };
+    var tipos = { 'audio/mp4': 'm4a', 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/wav': 'wav' };
     var mime = String(a.mime || '').split(';')[0];
     if (!tipos[mime]) return '';
     if (a.b64.length > 6000000) return '';
@@ -261,6 +265,66 @@ function radioPaginaAudio_(fileId, token) {
   }
   return HtmlService.createHtmlOutput(html).setTitle('Áudio · Rádio do Rosimar')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+// ---------- Transcrição (Gemini) ----------
+
+/** Transcreve uma lista de áudios curtos (WAV) e devolve { ok, textos: [...] } na mesma ordem. */
+function radioTranscrever_(audios, nomes) {
+  var chave = PropertiesService.getScriptProperties().getProperty('GEMINI_KEY');
+  if (!chave) return { ok: false, erro: 'sem-chave-gemini' };
+  audios = Array.isArray(audios) ? audios.slice(0, 10) : [];
+  if (!audios.length) return { ok: true, textos: [] };
+  var lista = Array.isArray(nomes) ? nomes.slice(0, 300).map(function (n) { return String(n).slice(0, 60); }).join('; ') : '';
+  var partes = [{ text:
+    'Você vai ouvir ' + audios.length + ' áudio(s) curtos, em português do Brasil, de um dedetizador registrando um serviço. ' +
+    'Cada áudio é a resposta a uma pergunta (cliente, serviço, dia/hora, valor ou endereço). ' +
+    'Transcreva cada áudio exatamente como foi falado, sem resumir e sem inventar. Se um áudio estiver em silêncio, devolva texto vazio. ' +
+    'Escreva números e valores em algarismos (ex.: 350, 1.300, 10h, 14/12). ' +
+    (lista ? 'Nomes de clientes que podem aparecer (use esta grafia quando for o caso): ' + lista + '. ' : '') +
+    'Responda só em JSON: {"textos": ["transcrição do áudio 1", "transcrição do áudio 2", ...]} na mesma ordem.' }];
+  audios.forEach(function (a, i) {
+    var mime = String(a && a.mime || '').split(';')[0];
+    if (!/^audio\/(wav|mp3|mpeg|ogg|flac|aac)$/.test(mime) || typeof a.b64 !== 'string') return;
+    partes.push({ text: 'Áudio ' + (i + 1) + ':' });
+    partes.push({ inline_data: { mime_type: mime, data: a.b64 } });
+  });
+  var corpo = { contents: [{ role: 'user', parts: partes }],
+    generationConfig: { temperature: 0, responseMimeType: 'application/json' } };
+  var ultimoErro = '';
+  for (var m = 0; m < RADIO.GEMINI_MODELOS.length; m++) {
+    try {
+      var resp = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + RADIO.GEMINI_MODELOS[m] +
+        ':generateContent', { method: 'post', contentType: 'application/json', payload: JSON.stringify(corpo),
+          headers: { 'x-goog-api-key': chave }, muteHttpExceptions: true });
+      var cod = resp.getResponseCode();
+      if (cod === 404) { ultimoErro = 'modelo ' + RADIO.GEMINI_MODELOS[m] + ' não existe'; continue; }
+      if (cod !== 200) return { ok: false, erro: 'gemini', detalhe: cod + ': ' + resp.getContentText().slice(0, 300) };
+      var json = JSON.parse(resp.getContentText());
+      var texto = json.candidates && json.candidates[0] && json.candidates[0].content &&
+        json.candidates[0].content.parts.map(function (p) { return p.text || ''; }).join('');
+      var dados = JSON.parse(String(texto || '{}').replace(/^```(json)?|```$/g, ''));
+      var textos = (Array.isArray(dados) ? dados : dados.textos || []).map(function (t) { return String(t || '').slice(0, 500); });
+      while (textos.length < audios.length) textos.push('');
+      return { ok: true, textos: textos.slice(0, audios.length), modelo: RADIO.GEMINI_MODELOS[m] };
+    } catch (err) { ultimoErro = String(err).slice(0, 300); }
+  }
+  return { ok: false, erro: 'gemini', detalhe: ultimoErro };
+}
+
+/** Rode pelo editor depois de colocar a GEMINI_KEY: confere se a chave funciona (e pede a permissão de internet). */
+function testarGemini() {
+  var chave = PropertiesService.getScriptProperties().getProperty('GEMINI_KEY');
+  if (!chave) { Logger.log('⚠ Falta a GEMINI_KEY em Configurações do projeto → Propriedades do script.'); return; }
+  for (var m = 0; m < RADIO.GEMINI_MODELOS.length; m++) {
+    var resp = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + RADIO.GEMINI_MODELOS[m] +
+      ':generateContent', { method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+        headers: { 'x-goog-api-key': chave },
+        payload: JSON.stringify({ contents: [{ parts: [{ text: 'Responda só: ok' }] }] }) });
+    Logger.log(RADIO.GEMINI_MODELOS[m] + ' → ' + resp.getResponseCode() + ' ' + resp.getContentText().slice(0, 120));
+    if (resp.getResponseCode() === 200) { Logger.log('✅ Gemini funcionando com ' + RADIO.GEMINI_MODELOS[m]); return; }
+  }
+  Logger.log('❌ Nenhum modelo respondeu. Confira a chave.');
 }
 
 // ---------- Agenda ----------

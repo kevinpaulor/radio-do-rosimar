@@ -2,6 +2,7 @@
 
 Cada linha é uma publicação. O código completo de qualquer uma fica em https://github.com/kevinpaulor/radio-do-rosimar/commits/main (botão <> abre o projeto como estava naquele momento).
 
+- **28/11/2026 02:34 · versão 24** — Modo "Voz com áudio (IA)": grava cada resposta em WAV, a IA (Gemini, pelo script) transcreve e o app preenche; áudio sempre salvo; detecção de fim de fala
 - **28/11/2026 02:25 · versão 23** — Bip mais alto (dois toques ao abrir o microfone, um ao fechar)
 - **28/11/2026 02:22 · versão 22** — Falas curtas (Cliente? Serviço? Que dia? Valor?), bip ao abrir e fechar o microfone, microfone abre logo depois da pergunta
 - **28/11/2026 02:18 · versão 21** — Voz e texto sem abrir o teclado sozinho (caixa no fim da tela); reconhecimento usa o mesmo microfone da gravação quando o Chrome permite; menos espera entre pergunta e microfone
