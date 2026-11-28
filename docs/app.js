@@ -119,7 +119,8 @@
     return {
       modo: ['voz', 'texto', 'ambos'].indexOf(a.modo) >= 0 ? a.modo : (teste ? 'ambos' : 'voz'),
       ordem: ordem,
-      endereco: ['sempre', 'novo', 'nunca'].indexOf(a.endereco) >= 0 ? a.endereco : 'novo'
+      endereco: ['sempre', 'novo', 'nunca'].indexOf(a.endereco) >= 0 ? a.endereco : 'novo',
+      gravarJunto: a.gravarJunto === true // experimental: no Android pode ocupar o microfone e o reconhecimento não ouve
     };
   }
   function salvarAjustes(a) { LS.set('radio_ajustes', a); }
@@ -205,7 +206,9 @@
   async function iniciarGravacao() {
     descartarGravacao();
     // No modo digitado não há reconhecimento disputando o microfone: grava sempre (para testar o áudio).
-    if ((modo() !== 'texto' && LS.get('radio_sem_audio', false)) || !window.MediaRecorder || !navigator.mediaDevices) return;
+    var aj = ajustes();
+    if (aj.modo !== 'texto' && (!aj.gravarJunto || LS.get('radio_sem_audio', false))) return; // voz: microfone livre para o reconhecimento
+    if (!window.MediaRecorder || !navigator.mediaDevices) return;
     try {
       // Sem cancelamento de eco: no Android ele coloca o celular em "modo ligação" e a voz do app fica baixa ou some.
       var stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
@@ -509,7 +512,7 @@
       var mudos = LS.get('radio_mudo_seguidos', 0) + 1;
       LS.set('radio_mudo_seguidos', mudos);
       if (mudos >= 2) LS.set('radio_sem_audio', true); // este celular não grava junto com o reconhecimento
-    } else if (LS.get('radio_sem_audio', false)) {
+    } else if (ajustes().gravarJunto && LS.get('radio_sem_audio', false)) {
       alertas.push('Sem áudio (este celular não grava junto)');
     }
     var reg = {
@@ -657,6 +660,8 @@
     Array.prototype.forEach.call(document.querySelectorAll('[data-end]'), function (b) {
       b.classList.toggle('marcado', b.getAttribute('data-end') === a.endereco);
     });
+    $('optGravar').classList.toggle('marcado', a.gravarJunto);
+    $('optGravar').textContent = a.gravarJunto ? '🔴 Gravar o áudio junto: LIGADO' : '⚪ Gravar o áudio junto: desligado';
     var lista = $('listaOrdem');
     lista.innerHTML = '';
     a.ordem.forEach(function (c, i) {
@@ -680,6 +685,11 @@
   });
   Array.prototype.forEach.call(document.querySelectorAll('[data-end]'), function (b) {
     b.addEventListener('click', function () { var a = ajustes(); a.endereco = b.getAttribute('data-end'); salvarAjustes(a); desenharAjustes(); });
+  });
+  $('optGravar').addEventListener('click', function () {
+    var a = ajustes(); a.gravarJunto = !a.gravarJunto; salvarAjustes(a);
+    LS.set('radio_sem_audio', false); LS.set('radio_mudo_seguidos', 0);
+    desenharAjustes();
   });
   $('btnOrdemPadrao').addEventListener('click', function () { var a = ajustes(); a.ordem = ORDEM_PADRAO.slice(); salvarAjustes(a); desenharAjustes(); });
   $('btnAjustes').addEventListener('click', abrirAjustes);
