@@ -28,7 +28,7 @@
     align-items:center; justify-content:center; gap:6px; }
   #btnFalar svg { width:38%; height:38%; }
   #btnFalar:active { transform:scale(.97); }
-  .onda { width:min(60vw,240px); height:min(60vw,240px); border-radius:50%; background:var(--verm); display:flex; align-items:center;
+  .onda { width:min(34vw,130px); height:min(34vw,130px); border-radius:50%; background:var(--verm); display:flex; align-items:center;
     justify-content:center; color:#fff; animation:pulsa 1.2s infinite; }
   .onda svg { width:40%; height:40%; }
   @keyframes pulsa { 0%{box-shadow:0 0 0 0 rgba(220,38,38,.55)} 70%{box-shadow:0 0 0 34px rgba(220,38,38,0)} 100%{box-shadow:0 0 0 0 rgba(220,38,38,0)} }
@@ -51,13 +51,34 @@
   #situacao.alerta { color:#b45309; font-weight:700; }
   #btnBaixar { border:1px solid #94a3b8; background:#fff; border-radius:10px; padding:8px 12px; font-size:15px; margin:4px 0 8px; display:none; }
   .credito { font-size:12px; opacity:.7; }
+  body.so-texto .onda, body.so-texto #btnParar { display:none; }
+  #respostaDigitada { width:100%; }
+  #progresso { width:100%; background:#fff; border-radius:16px; padding:6px 14px; box-shadow:0 3px 14px rgba(0,0,0,.08); text-align:left; }
+  .passo { display:flex; gap:10px; align-items:baseline; padding:8px 0; border-bottom:1px solid #eee; font-size:19px; color:#888; }
+  .passo:last-child { border-bottom:none; }
+  .passo .ic { width:22px; text-align:center; }
+  .passo .nome { min-width:92px; }
+  .passo b { flex:1; text-align:right; color:#111; font-weight:700; }
+  .passo.feito { color:#15803d; }
+  .passo.agora { color:#b91c1c; font-weight:800; font-size:21px; }
+  .grupo { width:100%; background:#fff; border-radius:16px; padding:10px 14px; box-shadow:0 3px 14px rgba(0,0,0,.08); display:flex; flex-direction:column; gap:8px; text-align:left; }
+  .titulo-grupo { margin:4px 0; font-weight:800; font-size:19px; }
+  .opcao { font-size:20px; padding:14px; border-radius:12px; border:2px solid #cbd5e1; background:#f8fafc; text-align:left; }
+  .opcao.marcado { border-color:#16a34a; background:#dcfce7; font-weight:800; }
+  .opcao.marcado::after { content:' ✔'; color:#16a34a; }
+  .ordem-item { display:flex; align-items:center; gap:8px; font-size:20px; padding:6px 0; border-bottom:1px solid #eee; }
+  .ordem-item .nome { flex:1; }
+  .ordem-item button { font-size:20px; width:52px; height:44px; border-radius:10px; border:2px solid #cbd5e1; background:#f8fafc; }
+  .ordem-item button:disabled { opacity:.3; }
+  .link { background:none; border:none; color:#2563eb; font-size:16px; text-align:left; padding:6px 0; }
   #ajudaBaixar { display:none; text-align:left; font-size:15px; background:#fff; border-radius:12px; padding:10px 14px; margin:6px auto; max-width:520px; }
 </style>
 </head>
 <body>
 <header>
   <h1>📡 Rádio do Rosimar</h1>
-  <span id="quem"></span>
+  <span style="display:flex;align-items:center;gap:10px"><span id="quem"></span>
+    <button id="btnAjustes" aria-label="Configurações" style="background:none;border:none;color:#fff;font-size:26px;padding:4px">⚙</button></span>
 </header>
 
 <main>
@@ -69,7 +90,7 @@
     <textarea id="campoLink" rows="4" placeholder="Cole o link aqui" style="width:100%;font-size:16px;border-radius:12px;border:2px solid #94a3b8;padding:10px"></textarea>
     <div class="botoes"><button class="btn sim" id="btnColar">CONFIGURAR</button></div>
     <p class="media" id="erroConfig" style="color:#b45309;font-size:18px"></p>
-    <p style="font-size:12px;color:#888">versão 15</p>
+    <p style="font-size:12px;color:#888">versão 17</p>
   </section>
 
   <!-- Início -->
@@ -78,9 +99,6 @@
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
       FALAR
     </button>
-    <label id="caixaTeste" style="display:none;font-size:18px;background:#fff;border:2px solid #94a3b8;border-radius:12px;padding:10px 14px">
-      <input type="checkbox" id="chkDigitar" style="width:22px;height:22px;vertical-align:middle"> ⌨ Responder digitando (teste)
-    </label>
     <p class="media" id="dica">Aperte e diga o <b>cliente</b>.<br>Depois: serviço, valor e dia.</p>
   </section>
 
@@ -88,6 +106,7 @@
   <section class="tela" id="tela-ouvindo">
     <p class="grande" id="tituloOuvindo">Pode falar…</p>
     <div class="onda"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg></div>
+    <div id="progresso"></div>
     <p id="parcial"></p>
     <div class="botoes"><button class="btn neutro" id="btnParar">PRONTO</button></div>
   </section>
@@ -108,6 +127,29 @@
     <p class="grande" id="msgGravado">Gravado!</p>
     <p class="media" id="subGravado"></p>
     <div class="botoes"><button class="btn sim" id="btnOutro">REGISTRAR OUTRO</button></div>
+  </section>
+
+  <!-- Configurações -->
+  <section class="tela" id="tela-ajustes">
+    <p class="grande">⚙ Configurações</p>
+    <div class="grupo">
+      <p class="titulo-grupo">Como responder</p>
+      <button class="opcao" data-modo="voz">🎙 Só voz</button>
+      <button class="opcao" data-modo="texto">⌨ Só texto</button>
+      <button class="opcao" data-modo="ambos">🎙⌨ Voz e texto</button>
+    </div>
+    <div class="grupo">
+      <p class="titulo-grupo">Ordem das perguntas</p>
+      <div id="listaOrdem"></div>
+      <button class="link" id="btnOrdemPadrao">Voltar para a ordem padrão</button>
+    </div>
+    <div class="grupo">
+      <p class="titulo-grupo">Perguntar o endereço</p>
+      <button class="opcao" data-end="novo">Só cliente novo</button>
+      <button class="opcao" data-end="sempre">Sempre</button>
+      <button class="opcao" data-end="nunca">Nunca</button>
+    </div>
+    <div class="botoes"><button class="btn sim" id="btnFecharAjustes">PRONTO</button></div>
   </section>
 
   <!-- Erro -->
@@ -135,7 +177,7 @@
   <div class="credito">Criado por Kevin Paulo · @Arkev.arq</div>
 </footer>
 
-<script src="parser.js?v=15"></script>
-<script src="app.js?v=15"></script>
+<script src="parser.js?v=17"></script>
+<script src="app.js?v=17"></script>
 </body>
 </html>

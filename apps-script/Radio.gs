@@ -13,7 +13,7 @@ var RADIO = {
   ABA_CLIENTES: 'Base de Clientes',
   SITE: 'https://kevinpaulor.github.io/radio-do-rosimar/',
   CABECALHO: ['Data do registro', 'Data do serviço', 'Cliente', 'Valor (R$)', 'Tipo de serviço',
-              'Situação', 'Texto falado', 'Quem registrou', 'Status', 'Alerta', 'ID', 'Áudio', 'Hora', 'Agenda'],
+              'Situação', 'Texto falado', 'Quem registrou', 'Status', 'Alerta', 'ID', 'Áudio', 'Hora', 'Agenda', 'Endereço'],
   PASTA_AUDIOS: 'Rádio do Rosimar — Áudios',
   AGENDA: 'Serviços do Rosimar',
   FUSO: 'America/Sao_Paulo',
@@ -166,7 +166,7 @@ function doPost(e) {
       var audio = radioSalvarAudio_(r, id);
       audios.push(audio);
       var hora = /^\d{2}:\d{2}$/.test(String(r.hora || '')) ? r.hora : '';
-      extras.push([hora, radioCriarEvento_(r, id, hora, audio)]);
+      extras.push([hora, radioCriarEvento_(r, id, hora, audio), radioTexto_(r.endereco, 200)]);
     });
     if (linhas.length) {
       var linha0 = aba.getLastRow() + 1;
@@ -181,6 +181,7 @@ function doPost(e) {
       aba.getRange(linha0, 12, linhas.length, 1).setRichTextValues(audios.map(function (u) { return [radioLink_('▶ Ouvir', u)]; }));
       aba.getRange(linha0, 13, linhas.length, 1).setNumberFormat('@').setValues(extras.map(function (x) { return [x[0]]; }));
       aba.getRange(linha0, 14, linhas.length, 1).setRichTextValues(extras.map(function (x) { return [radioLink_('📅 Ver', x[1])]; }));
+      aba.getRange(linha0, 15, linhas.length, 1).setValues(extras.map(function (x) { return [x[2]]; }));
     }
     return radioResposta_({ ok: true, gravados: gravados });
   } finally {
@@ -315,7 +316,7 @@ function radioCriarEvento_(r, id, hora, urlAudio) {
       'ID: ' + id
     ];
     if (urlAudio) linhasDesc.push('Áudio: ' + urlAudio);
-    var opcoes = { description: linhasDesc.filter(String).join('\n'), location: info.endereco || '' };
+    var opcoes = { description: linhasDesc.filter(String).join('\n'), location: radioTexto_(r.endereco, 200) || info.endereco || '' };
     var ev;
     if (hora) {
       var ini = Utilities.parseDate(r.dataServico + ' ' + hora, RADIO.FUSO, 'yyyy-MM-dd HH:mm');
