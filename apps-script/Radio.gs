@@ -20,7 +20,8 @@ var RADIO = {
   DURACAO_HORAS: 2,
   // IA que transcreve os áudios no modo "Voz com áudio (IA)". A chave fica em
   // Configurações do projeto → Propriedades do script → GEMINI_KEY (nunca no código).
-  GEMINI_MODELOS: ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash'],
+  // Tenta na ordem; pula para o próximo se o modelo não existir mais (404) ou estiver sobrecarregado (503/429).
+  GEMINI_MODELOS: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-flash-latest', 'gemini-3.7-flash'],
   TIPOS: ['Dedetização', 'Descupinização', "Limpeza de caixa d'água", 'Desratização',
           'Impermeabilização', 'Documento/análise', 'Venda de produto', 'Conserto de bomba', 'Outro'],
   SITUACOES: ['Realizado', 'A fazer', 'Pago', 'A receber']
@@ -313,7 +314,7 @@ function radioTranscrever_(audios, nomes) {
     try {
       var resp = radioGemini_(RADIO.GEMINI_MODELOS[m], corpo, chave);
       var cod = resp.getResponseCode();
-      if (cod === 404) { ultimoErro = 'modelo ' + RADIO.GEMINI_MODELOS[m] + ' não existe'; continue; }
+      if (cod === 404 || cod === 503 || cod === 429 || cod === 500) { ultimoErro = RADIO.GEMINI_MODELOS[m] + ' → ' + cod; continue; }
       if (cod !== 200) return { ok: false, erro: 'gemini', detalhe: cod + ': ' + resp.getContentText().slice(0, 300) };
       var json = JSON.parse(resp.getContentText());
       var texto = json.candidates && json.candidates[0] && json.candidates[0].content &&
@@ -374,7 +375,7 @@ function radioExtrair_(audio, quando) {
     try {
       var resp = radioGemini_(RADIO.GEMINI_MODELOS[m], corpo, chave);
       var cod = resp.getResponseCode();
-      if (cod === 404) { ultimoErro = 'modelo ' + RADIO.GEMINI_MODELOS[m] + ' não existe'; continue; }
+      if (cod === 404 || cod === 503 || cod === 429 || cod === 500) { ultimoErro = RADIO.GEMINI_MODELOS[m] + ' → ' + cod; continue; }
       if (cod !== 200) return { ok: false, erro: 'gemini', detalhe: cod + ': ' + resp.getContentText().slice(0, 300) };
       var json = JSON.parse(resp.getContentText());
       var texto = json.candidates[0].content.parts.map(function (x) { return x.text || ''; }).join('');
