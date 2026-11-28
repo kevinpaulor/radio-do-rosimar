@@ -497,6 +497,50 @@ function radioCriarEvento_(r, id, hora, urlAudio) {
   }
 }
 
+// ---------- Ouvir o áudio sem sair da planilha ----------
+
+/** Cria o menu "📡 Rádio" ao abrir a planilha. */
+function onOpen() {
+  SpreadsheetApp.getUi().createMenu('📡 Rádio')
+    .addItem('▶ Ouvir a linha selecionada', 'ouvirLinhaSelecionada')
+    .addSeparator()
+    .addItem('Mostrar links de configuração', 'configurarRadio')
+    .addToUi();
+}
+
+/** Abre uma janelinha com o player do áudio da linha selecionada (pode deixar aberta e trocar de linha). */
+function ouvirLinhaSelecionada() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var aba = ss.getActiveSheet();
+  var ui = SpreadsheetApp.getUi();
+  if (aba.getName() !== RADIO.ABA) { ui.alert('Clique numa linha da aba "' + RADIO.ABA + '".'); return; }
+  var linha = aba.getActiveRange().getRow();
+  if (linha < 2) { ui.alert('Clique numa linha de registro (não no cabeçalho).'); return; }
+  var dados = aba.getRange(linha, 1, 1, 12).getDisplayValues()[0];
+  var id = dados[10];
+  var link = aba.getRange(linha, 12).getRichTextValue();
+  var url = link && link.getLinkUrl();
+  var m = /[?&]f=([\w-]+)/.exec(url || '');
+  var html;
+  if (!m) {
+    html = '<p style="font:15px sans-serif">Esta linha não tem áudio.</p>';
+  } else {
+    try {
+      var blob = DriveApp.getFileById(m[1]).getBlob();
+      html = '<div style="font-family:sans-serif;font-size:14px">' +
+        '<p style="margin:0 0 6px"><b>Linha ' + linha + '</b> · ' + radioHtml_(dados[2] || 'sem cliente') + ' · ' + radioHtml_(dados[3]) + ' · ' + radioHtml_(dados[1]) + '</p>' +
+        '<audio controls autoplay style="width:100%" src="data:' + blob.getContentType() + ';base64,' + Utilities.base64Encode(blob.getBytes()) + '"></audio>' +
+        '<p style="color:#555;margin:8px 0 0">' + radioHtml_(dados[6]) + '</p>' +
+        '<p style="color:#888;font-size:12px;margin:8px 0 0">Para ouvir outra: clique em outra linha e use o menu 📡 Rádio de novo.</p></div>';
+    } catch (err) {
+      html = '<p style="font:15px sans-serif">Áudio não encontrado (pode ter sido apagado).</p>';
+    }
+  }
+  ui.showModelessDialog(HtmlService.createHtmlOutput(html).setWidth(420).setHeight(190), '▶ Áudio · ' + (id || 'linha ' + linha));
+}
+
+function radioHtml_(t) { return String(t || '').replace(/[<>&"]/g, function (c) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]; }); }
+
 /** Célula com texto clicável (ou vazia). */
 function radioLink_(texto, url) {
   if (!url) return SpreadsheetApp.newRichTextValue().setText('').build();
