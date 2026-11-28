@@ -270,6 +270,20 @@ function radioPaginaAudio_(fileId, token) {
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
+/** Chama o Gemini. Manda a chave no cabeçalho; se for recusada (401/403), tenta de novo com ?key= (chaves novas "AQ."). */
+function radioGemini_(modelo, corpo, chave) {
+  var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + modelo + ':generateContent';
+  var op = { method: 'post', contentType: 'application/json', payload: JSON.stringify(corpo), muteHttpExceptions: true };
+  op.headers = { 'x-goog-api-key': chave };
+  var resp = UrlFetchApp.fetch(url, op);
+  var cod = resp.getResponseCode();
+  if (cod === 401 || cod === 403) {
+    delete op.headers;
+    resp = UrlFetchApp.fetch(url + '?key=' + encodeURIComponent(chave), op);
+  }
+  return resp;
+}
+
 // ---------- Transcrição (Gemini) ----------
 
 /** Transcreve uma lista de áudios curtos (WAV) e devolve { ok, textos: [...] } na mesma ordem. */
@@ -297,9 +311,7 @@ function radioTranscrever_(audios, nomes) {
   var ultimoErro = '';
   for (var m = 0; m < RADIO.GEMINI_MODELOS.length; m++) {
     try {
-      var resp = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + RADIO.GEMINI_MODELOS[m] +
-        ':generateContent', { method: 'post', contentType: 'application/json', payload: JSON.stringify(corpo),
-          headers: { 'x-goog-api-key': chave }, muteHttpExceptions: true });
+      var resp = radioGemini_(RADIO.GEMINI_MODELOS[m], corpo, chave);
       var cod = resp.getResponseCode();
       if (cod === 404) { ultimoErro = 'modelo ' + RADIO.GEMINI_MODELOS[m] + ' não existe'; continue; }
       if (cod !== 200) return { ok: false, erro: 'gemini', detalhe: cod + ': ' + resp.getContentText().slice(0, 300) };
@@ -320,10 +332,7 @@ function testarGemini() {
   var chave = PropertiesService.getScriptProperties().getProperty('GEMINI_KEY');
   if (!chave) { Logger.log('⚠ Falta a GEMINI_KEY em Configurações do projeto → Propriedades do script.'); return; }
   for (var m = 0; m < RADIO.GEMINI_MODELOS.length; m++) {
-    var resp = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + RADIO.GEMINI_MODELOS[m] +
-      ':generateContent', { method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-        headers: { 'x-goog-api-key': chave },
-        payload: JSON.stringify({ contents: [{ parts: [{ text: 'Responda só: ok' }] }] }) });
+    var resp = radioGemini_(RADIO.GEMINI_MODELOS[m], { contents: [{ parts: [{ text: 'Responda só: ok' }] }] }, chave);
     Logger.log(RADIO.GEMINI_MODELOS[m] + ' → ' + resp.getResponseCode() + ' ' + resp.getContentText().slice(0, 120));
     if (resp.getResponseCode() === 200) { Logger.log('✅ Gemini funcionando com ' + RADIO.GEMINI_MODELOS[m]); return; }
   }
@@ -363,9 +372,7 @@ function radioExtrair_(audio, quando) {
   var ultimoErro = '';
   for (var m = 0; m < RADIO.GEMINI_MODELOS.length; m++) {
     try {
-      var resp = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + RADIO.GEMINI_MODELOS[m] +
-        ':generateContent', { method: 'post', contentType: 'application/json', payload: JSON.stringify(corpo),
-          headers: { 'x-goog-api-key': chave }, muteHttpExceptions: true });
+      var resp = radioGemini_(RADIO.GEMINI_MODELOS[m], corpo, chave);
       var cod = resp.getResponseCode();
       if (cod === 404) { ultimoErro = 'modelo ' + RADIO.GEMINI_MODELOS[m] + ' não existe'; continue; }
       if (cod !== 200) return { ok: false, erro: 'gemini', detalhe: cod + ': ' + resp.getContentText().slice(0, 300) };
