@@ -2,6 +2,7 @@
 (function () {
   'use strict';
   var P = window.RadioParser;
+  var VERSAO = 20, VERSAO_DATA = '28/11/2026 02:12'; // atualizado a cada publicação
   var $ = function (id) { return document.getElementById(id); };
   var LS = {
     get: function (k, padrao) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : padrao; } catch (e) { return padrao; } },
@@ -755,6 +756,28 @@
     if (erro) { $('erroConfig').textContent = '⚠ ' + erro; return; }
     location.replace(location.pathname);
   });
+
+  // ---------- Versão no rodapé (e aviso se já existe uma mais nova) ----------
+  function mostrarVersao(nova) {
+    var el = $('versaoApp');
+    el.textContent = 'Versão ' + VERSAO + ' · ' + VERSAO_DATA;
+    if (nova && nova.versao > VERSAO) {
+      el.textContent += '  ·  nova versão ' + nova.versao + ' disponível: feche e abra o app';
+      el.classList.add('alerta');
+    } else if (nova) {
+      el.textContent += ' ✓ atualizada';
+      el.classList.remove('alerta');
+    }
+  }
+  async function conferirVersao() {
+    try {
+      var r = await fetch('versao.json?t=' + Date.now(), { cache: 'no-store' });
+      mostrarVersao(await r.json());
+    } catch (e) { mostrarVersao(null); }
+  }
+  mostrarVersao(null);
+  conferirVersao();
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') conferirVersao(); });
 
   // Para os testes automáticos
   window.__radio = { registrar: registrar, enviarFila: enviarFila, estado: function () { return tela; }, ajustes: ajustes };
