@@ -132,7 +132,10 @@ function doPost(e) {
   try { corpo = JSON.parse(e.postData.contents); } catch (err) { return radioResposta_({ ok: false, erro: 'json' }); }
   if (!radioChaveOk_(corpo.chave)) return radioResposta_({ ok: false, erro: 'chave' });
   if (corpo.acao === 'transcrever') return radioResposta_(radioTranscrever_(corpo.audios, corpo.nomes));
+  if (corpo.acao === 'extrair') return radioResposta_(radioExtrair_(corpo.audio, corpo.quando));
   var registros = Array.isArray(corpo.registros) ? corpo.registros.slice(0, 50) : [];
+  // gravados sem internet: a IA preenche aqui, antes de gravar na planilha (fora da trava, pode levar alguns segundos)
+  registros.forEach(function (r) { if (r && r.pendenteIA) radioPreencherPendente_(r); });
 
   var trava = LockService.getScriptLock();
   trava.waitLock(20000);
@@ -325,6 +328,93 @@ function testarGemini() {
     if (resp.getResponseCode() === 200) { Logger.log('✅ Gemini funcionando com ' + RADIO.GEMINI_MODELOS[m]); return; }
   }
   Logger.log('❌ Nenhum modelo respondeu. Confira a chave.');
+}
+
+// ---------- Uma frase: a IA ouve e separa os campos ----------
+
+var RADIO_DIAS = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+
+/** Ouve uma frase e devolve { ok, campos: {texto, cliente, clienteDaLista, servico, data, hora, valor, situacao, endereco} }.
+ *  "quando" = data em que foi gravado (AAAA-MM-DD), para entender "hoje", "ontem", "sexta". */
+function radioExtrair_(audio, quando) {
+  var chave = PropertiesService.getScriptProperties().getProperty('GEMINI_KEY');
+  if (!chave) return { ok: false, erro: 'sem-chave-gemini' };
+  var mime = String(audio && audio.mime || '').split(';')[0];
+  if (!audio || typeof audio.b64 !== 'string' || !/^audio\/(wav|mp3|mpeg|ogg|flac|aac)$/.test(mime)) return { ok: false, erro: 'audio' };
+  var base = /^\d{4}-\d{2}-\d{2}$/.test(String(quando || '')) ? quando : Utilities.formatDate(new Date(), RADIO.FUSO, 'yyyy-MM-dd');
+  var p = base.split('-'), d = new Date(+p[0], +p[1] - 1, +p[2]);
+  var nomes = radioClientes_().map(function (c) { return c.nome + (c.extrato ? ' (no banco: ' + c.extrato + ')' : '') + (c.bairro ? ' [' + c.bairro + ']' : ''); });
+  var instrucao =
+    'Você recebe um áudio curto, em português do Brasil, de um dedetizador registrando um serviço. ' +
+    'O áudio foi gravado em ' + RADIO_DIAS[d.getDay()] + ', ' + base + ' (use essa data para entender "hoje", "ontem", "amanhã", "sexta", "dia 14"). ' +
+    'Clientes já cadastrados: ' + nomes.slice(0, 300).join('; ') + '. ' +
+    'Tipos de serviço permitidos: ' + RADIO.TIPOS.join(', ') + ' (barata/formiga/pulga = Dedetização; cupim = Descupinização; rato = Desratização; caixa d\'água = Limpeza de caixa d\'água; bomba = Conserto de bomba). ' +
+    'Responda SÓ em JSON com as chaves: ' +
+    'texto (transcrição fiel do que foi falado), ' +
+    'cliente (se for um cliente cadastrado, escreva exatamente o nome da lista; se não, o nome como foi falado; vazio se não disse), ' +
+    'clienteDaLista (true/false), ' +
+    'servico (um dos tipos permitidos; dois tipos = "A + B"; vazio se não disse), ' +
+    'data (AAAA-MM-DD; vazio se não disse dia), hora (HH:MM; vazio se não disse), ' +
+    'valor (número em reais, ex. 350 ou 1300.5; null se não disse), ' +
+    'situacao (uma de: Realizado, A fazer, Pago, A receber; vazio se não ficou claro; marcado/agendado/hora futura = A fazer), ' +
+    'endereco (se falou um endereço ou bairro do serviço; senão vazio). Não invente nada que não foi falado.';
+  var corpo = { contents: [{ role: 'user', parts: [{ text: instrucao }, { inline_data: { mime_type: mime, data: audio.b64 } }] }],
+    generationConfig: { temperature: 0, responseMimeType: 'application/json' } };
+  var ultimoErro = '';
+  for (var m = 0; m < RADIO.GEMINI_MODELOS.length; m++) {
+    try {
+      var resp = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + RADIO.GEMINI_MODELOS[m] +
+        ':generateContent', { method: 'post', contentType: 'application/json', payload: JSON.stringify(corpo),
+          headers: { 'x-goog-api-key': chave }, muteHttpExceptions: true });
+      var cod = resp.getResponseCode();
+      if (cod === 404) { ultimoErro = 'modelo ' + RADIO.GEMINI_MODELOS[m] + ' não existe'; continue; }
+      if (cod !== 200) return { ok: false, erro: 'gemini', detalhe: cod + ': ' + resp.getContentText().slice(0, 300) };
+      var json = JSON.parse(resp.getContentText());
+      var texto = json.candidates[0].content.parts.map(function (x) { return x.text || ''; }).join('');
+      var c = JSON.parse(String(texto).replace(/^```(json)?|```$/g, ''));
+      return { ok: true, campos: radioLimparCampos_(c), modelo: RADIO.GEMINI_MODELOS[m] };
+    } catch (err) { ultimoErro = String(err).slice(0, 300); }
+  }
+  return { ok: false, erro: 'gemini', detalhe: ultimoErro };
+}
+
+function radioLimparCampos_(c) {
+  c = c || {};
+  var valor = Number(c.valor);
+  var nomesBase = radioClientes_().map(function (x) { return x.nome; });
+  var cliente = String(c.cliente || '').trim().slice(0, 120);
+  return {
+    texto: String(c.texto || '').slice(0, 600),
+    cliente: cliente,
+    clienteDaLista: nomesBase.indexOf(cliente) >= 0,
+    servico: String(c.servico || '').slice(0, 80),
+    data: /^\d{4}-\d{2}-\d{2}$/.test(String(c.data || '')) ? c.data : '',
+    hora: /^\d{2}:\d{2}$/.test(String(c.hora || '')) ? c.hora : '',
+    valor: isFinite(valor) && valor > 0 ? Math.round(valor * 100) / 100 : null,
+    situacao: RADIO.SITUACOES.indexOf(c.situacao) >= 0 ? c.situacao : '',
+    endereco: String(c.endereco || '').slice(0, 200)
+  };
+}
+
+/** Registro gravado sem internet: a IA preenche os campos a partir do áudio. */
+function radioPreencherPendente_(r) {
+  var res = r.audio ? radioExtrair_(r.audio, r.gravadoEm) : { ok: false, erro: 'audio' };
+  var alertas = [];
+  if (res.ok) {
+    var c = res.campos;
+    r.cliente = c.cliente; r.tipo = c.servico; r.valor = c.valor; r.hora = c.hora; r.endereco = r.endereco || c.endereco;
+    r.dataServico = c.data || r.gravadoEm || '';
+    r.situacao = c.situacao || ((c.hora || (c.data && c.data > (r.gravadoEm || ''))) ? 'A fazer' : '');
+    r.texto = '[IA] ' + c.texto;
+    alertas.push('Preenchido sem confirmação: conferir');
+    if (c.cliente && !c.clienteDaLista) alertas.push('Cliente novo: cadastrar na Base');
+    if (!c.cliente) alertas.push('Sem cliente');
+    if (!c.valor) alertas.push('Sem valor');
+  } else {
+    r.dataServico = r.gravadoEm || '';
+    alertas.push(res.erro === 'sem-chave-gemini' ? 'Gravado sem internet; IA sem chave: ouvir o áudio' : 'Gravado sem internet; IA não entendeu: ouvir o áudio');
+  }
+  r.alerta = alertas.concat(r.alerta ? [r.alerta] : []).join(' · ');
 }
 
 // ---------- Agenda ----------

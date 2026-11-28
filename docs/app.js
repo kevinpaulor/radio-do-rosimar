@@ -2,12 +2,50 @@
 (function () {
   'use strict';
   var P = window.RadioParser;
-  var VERSAO = 24, VERSAO_DATA = '28/11/2026 02:34'; // atualizado a cada publicação
+  var VERSAO = 25, VERSAO_DATA = '28/11/2026 08:15'; // atualizado a cada publicação
   var $ = function (id) { return document.getElementById(id); };
   var LS = {
     get: function (k, padrao) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : padrao; } catch (e) { return padrao; } },
     set: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } }
   };
+
+  // ---------- Fila de registros (IndexedDB: cabem centenas de áudios; cai no localStorage se não der) ----------
+  var filaMem = [];
+  var filaDB = null;
+  var filaPronta = new Promise(function (pronto) {
+    try {
+      var req = indexedDB.open('radio', 1);
+      req.onupgradeneeded = function () { req.result.createObjectStore('dados'); };
+      req.onerror = function () { filaMem = LS.get('radio_fila', []); pronto(); };
+      req.onsuccess = function () {
+        filaDB = req.result;
+        var tx = filaDB.transaction('dados', 'readonly').objectStore('dados').get('fila');
+        tx.onsuccess = function () {
+          filaMem = Array.isArray(tx.result) ? tx.result : [];
+          var antiga = LS.get('radio_fila', []); // migra a fila antiga do localStorage
+          if (antiga.length) {
+            var ids = {}; filaMem.forEach(function (r) { ids[r.id] = true; });
+            antiga.forEach(function (r) { if (!ids[r.id]) filaMem.push(r); });
+            filaSalvar(filaMem).then(function () { try { localStorage.removeItem('radio_fila'); } catch (e) { /* nada */ } });
+          }
+          pronto();
+        };
+        tx.onerror = function () { pronto(); };
+      };
+    } catch (e) { filaMem = LS.get('radio_fila', []); pronto(); }
+  });
+  function filaSalvar(arr) {
+    filaMem = arr;
+    return new Promise(function (ok) {
+      if (!filaDB) { ok(LS.set('radio_fila', arr)); return; }
+      try {
+        var tx = filaDB.transaction('dados', 'readwrite');
+        tx.objectStore('dados').put(arr, 'fila');
+        tx.oncomplete = function () { ok(true); };
+        tx.onerror = tx.onabort = function () { ok(false); };
+      } catch (e) { ok(false); }
+    });
+  }
 
   // ---------- Configuração (vem do link #cfg=...) ----------
   function aplicarConfig(b64url) {
@@ -60,7 +98,7 @@
 
   function atualizarRodape() {
     if (!cfg) { $('situacao').textContent = ''; return; }
-    var fila = LS.get('radio_fila', []);
+    var fila = filaMem;
     var hoje = new Date().toDateString();
     var nHoje = LS.get('radio_hist', []).filter(function (h) { return new Date(h.quando).toDateString() === hoje; }).length;
     var el = $('situacao');
@@ -143,7 +181,7 @@
     var ordem = Array.isArray(a.ordem) ? a.ordem.filter(function (c) { return CAMPOS[c]; }) : [];
     ORDEM_PADRAO.forEach(function (c) { if (ordem.indexOf(c) < 0) ordem.push(c); });
     return {
-      modo: ['voz', 'texto', 'ambos', 'ia'].indexOf(a.modo) >= 0 ? a.modo : (teste ? 'ambos' : 'voz'),
+      modo: ['voz', 'texto', 'ambos', 'ia', 'frase'].indexOf(a.modo) >= 0 ? a.modo : (teste ? 'ambos' : 'voz'),
       ordem: ordem,
       endereco: ['sempre', 'novo', 'nunca'].indexOf(a.endereco) >= 0 ? a.endereco : 'novo',
       gravarJunto: a.gravarJunto === true // experimental: no Android pode ocupar o microfone e o reconhecimento não ouve
@@ -181,7 +219,7 @@
   function ouvir(opcoes) {
     opcoes = opcoes || {};
     var m = modo();
-    if (m === 'ia') m = 'voz'; // no modo IA, o "sim/não" do fim usa o reconhecimento normal (a gravação já parou)
+    if (m === 'ia' || m === 'frase') m = 'voz'; // nos modos com IA, as perguntas do fim usam o reconhecimento normal (a gravação já parou)
     if (m === 'texto') {
       return new Promise(function (resolve) {
         digitando = { resolve: function (t) { if (t) algumDigitado = true; resolve(t); } };
@@ -246,7 +284,7 @@
     // No modo digitado não há reconhecimento disputando o microfone: grava sempre (para testar o áudio).
     var aj = ajustes();
     // voz: só grava se o experimental estiver ligado e este celular não tiver falhado antes
-    if (aj.modo === 'ia') return; // o modo IA tem gravação própria (WAV)
+    if (aj.modo === 'ia' || aj.modo === 'frase' || frasesAtiva) return; // os modos com IA têm gravação própria (WAV)
     if (aj.modo !== 'texto' && (!aj.gravarJunto || LS.get('radio_sem_audio', false))) return;
     if (!window.MediaRecorder || !navigator.mediaDevices) return;
     try {
@@ -440,7 +478,9 @@
     ia = null;
   }
   /** Grava uma resposta: começa quando ouve voz, para depois de ~1,3 s de silêncio (ou 7 s sem ninguém falar). */
-  function gravarClipe() {
+  function gravarClipe(op) {
+    op = op || {};
+    var SILENCIO = op.silencio || 1300, MAXIMO = op.maximo || 20000;
     return new Promise(function (resolve) {
       if (!ia) return resolve(null);
       var proc = ia.ctx.createScriptProcessor(4096, 1, 1);
@@ -462,9 +502,9 @@
         // limite de "voz": acima do fundo, mas nunca alto demais (se ele já começou a falar logo no bip)
         var limiar = Math.min(0.06, Math.max(0.015, (ruido === null ? 0.005 : ruido) * 3));
         if (rms > limiar) { falou = true; ultimoSom = agora; }
-        if (falou && agora - ultimoSom > 1300) fim();
+        if (falou && agora - ultimoSom > SILENCIO) fim();
         else if (!falou && agora - inicio > 7000) fim();
-        else if (agora - inicio > 20000) fim();
+        else if (agora - inicio > MAXIMO) fim();
       };
       ia.fonte.connect(proc); proc.connect(ia.ctx.destination);
     });
@@ -582,9 +622,137 @@
     }
   }
 
+  // ---------- Modo "Uma frase + IA" (e plano B sem internet para todos os modos de voz) ----------
+  var frasesAtiva = false;
+  function checarInternet() {
+    if (!navigator.onLine) return Promise.resolve(false);
+    return Promise.race([
+      fetch(cfg.url + '?acao=ping&chave=' + encodeURIComponent(cfg.chave), { cache: 'no-store' })
+        .then(function (r) { return r.ok; }).catch(function () { return false; }),
+      new Promise(function (ok) { setTimeout(function () { ok(false); }, 6000); })
+    ]);
+  }
+  async function extrair(wav, quando) {
+    var b64 = await paraBase64(wav);
+    var resp;
+    try {
+      resp = await Promise.race([
+        fetch(cfg.url, { method: 'POST', body: JSON.stringify({ chave: cfg.chave, acao: 'extrair', quando: quando, audio: { mime: 'audio/wav', b64: b64 } }) }),
+        new Promise(function (_, nao) { setTimeout(function () { nao(new Error('rede')); }, 30000); })
+      ]);
+    } catch (e) { throw new Error('rede'); }
+    var json;
+    try { json = await resp.json(); } catch (e) { throw new Error('rede'); }
+    if (!json.ok) { if (json.erro === 'chave') chaveRevogada(); throw new Error(json.erro || 'ia-falhou'); }
+    return json.campos || {};
+  }
+  function segundosDe(clipe) { return Math.round(clipe.pedacos.length * 4096 / clipe.taxa); }
+
+  /** Sem internet: guarda o áudio na fila; o script preenche com a IA quando o sinal voltar. */
+  async function salvarPendente(wav, clipe, hoje) {
+    var b64 = await paraBase64(wav);
+    var reg = { id: novoId(), pendenteIA: true, gravadoEm: hoje, quem: cfg.quem, cliente: '', valor: '', tipo: '', situacao: '',
+      texto: '', hora: '', endereco: '', alerta: '', audio: { mime: 'audio/wav', b64: b64, segundos: segundosDe(clipe) } };
+    await filaPronta;
+    var fila = filaMem.slice(); fila.push(reg);
+    if (!(await filaSalvar(fila))) {
+      mostrar('erro');
+      $('msgErro').textContent = 'Memória do celular cheia';
+      $('subErro').textContent = 'Não coube o áudio. Conecte na internet para enviar os registros guardados.';
+      await falar('Memória cheia.');
+      return;
+    }
+    var hist = LS.get('radio_hist', []); hist.push({ quando: Date.now(), cliente: '(sem internet)', valor: '' }); LS.set('radio_hist', hist.slice(-60));
+    mostrar('gravado');
+    $('msgErro').textContent = '';
+    $('msgGravado').textContent = 'Gravado!';
+    $('subGravado').textContent = 'Sem internet: vou preencher sozinho quando tiver sinal.';
+    atualizarRodape();
+    await falar('Sem internet. Gravei, preencho depois.');
+    enviarFila();
+  }
+
+  async function registrarFrase(opcoes) {
+    opcoes = opcoes || {};
+    cancelarTudo();
+    var meu = fluxo;
+    frasesAtiva = true;
+    falas = [];
+    audioAtual = null;
+    algumDigitado = false;
+    var aj = ajustes();
+    var clientes = LS.get('radio_clientes', []);
+    var hoje = P.entender('', {}).dataServico;
+    var r = registroVazio(hoje);
+    var net = opcoes.offline ? Promise.resolve(false) : checarInternet(); // descobre enquanto ele fala
+    try {
+      await abrirMicrofoneIA();
+      mostrar('ouvindo');
+      $('tituloOuvindo').textContent = 'Fale tudo: cliente, serviço, dia e valor';
+      $('parcial').textContent = '';
+      $('progresso').innerHTML = '';
+      await falar(opcoes.offline ? 'Sem internet. Fala tudo de uma vez.' : 'Pode falar.');
+      if (meu !== fluxo) return fecharMicrofoneIA();
+      await bip('inicio');
+      var clipe = await gravarClipe({ silencio: 1800, maximo: 40000 });
+      bip('fim');
+      fecharMicrofoneIA();
+      if (meu !== fluxo) return;
+      if (!clipe || !clipe.falou) { mostrar('inicio'); await falar('Não ouvi. Aperte de novo.'); return; }
+      var wav = paraWav([clipe]);
+      $('tituloOuvindo').textContent = 'Entendendo…';
+      var online = await net;
+      var campos = null, falhaIA = '';
+      if (online) {
+        try { campos = await extrair(wav, hoje); }
+        catch (e) { if (e.message === 'rede') online = false; else falhaIA = e.message; }
+      }
+      if (meu !== fluxo) return;
+      if (!online) return salvarPendente(wav, clipe, hoje);
+
+      if (campos) {
+        var naBase = clientes.some(function (c) { return c.nome === campos.cliente; });
+        r.cliente = campos.cliente || ''; r.clienteBase = !!(campos.cliente && (naBase || campos.clienteDaLista)); r.clienteNota = r.clienteBase ? 1 : 0;
+        r.tipo = campos.servico || ''; r.valor = campos.valor || null; r.hora = campos.hora || '';
+        r.dataServico = campos.data || hoje; r.situacao = campos.situacao || ''; r.endereco = campos.endereco || '';
+        if (campos.texto) falas.push(campos.texto);
+      }
+      r.diaOk = true; // sem dia falado = hoje (não pergunta)
+      r.falhaIA = falhaIA;
+      if (falhaIA) await falar('Não entendi tudo. Vou perguntar.');
+      // pergunta só o que faltou (pelo reconhecimento normal: a gravação já terminou)
+      for (var i = 0; i < aj.ordem.length; i++) {
+        var campo = aj.ordem[i];
+        if (meu !== fluxo) return;
+        if (!precisaPerguntar(r, campo, aj)) continue;
+        await perguntarNaTela(CAMPOS[campo].pergunta, r, campo, aj.ordem, CAMPOS[campo].fala);
+        if (meu !== fluxo) return;
+        var resp = '';
+        try { resp = await ouvirNaTela(); } catch (e) { break; } // sem reconhecimento agora: confirma com o que tem
+        if (meu !== fluxo) return;
+        if (!resp) continue;
+        falas.push(resp);
+        aplicarResposta(r, campo, resp, clientes);
+      }
+      fecharRegistro(r, hoje);
+      audioAtual = { blob: wav, mime: 'audio/wav', silencioso: false, segundos: segundosDe(clipe) };
+      atual = r;
+      await confirmar(meu);
+    } catch (e) {
+      fecharMicrofoneIA();
+      if (meu !== fluxo) return;
+      erro(e);
+    } finally {
+      frasesAtiva = false;
+    }
+  }
+
   var audioAtual = null;
   async function registrar() {
-    if (modo() === 'ia') return registrarIA();
+    var m = modo();
+    if (m === 'frase') return registrarFrase();
+    if (m !== 'texto' && !navigator.onLine) return registrarFrase({ offline: true }); // sem internet: grava e preenche depois
+    if (m === 'ia') return registrarIA();
     cancelarTudo();
     var meu = fluxo;
     falas = [];
@@ -651,6 +819,7 @@
       await confirmar(meu);
     } catch (e) {
       if (meu !== fluxo) return;
+      if (e && e.message === 'sem-internet-voz') return registrarFrase({ offline: true }); // caiu a internet: grava e preenche depois
       erro(e);
     }
   }
@@ -755,13 +924,14 @@
       alerta: alertas.join(' · ')
     };
     if (audioB64) reg.audio = { mime: audio.mime, b64: audioB64, segundos: audio.segundos };
-    var fila = LS.get('radio_fila', []);
+    await filaPronta;
+    var fila = filaMem.slice();
     fila.push(reg);
-    if (!LS.set('radio_fila', fila)) {
+    if (!(await filaSalvar(fila))) {
       // memória cheia: guarda o registro sem o áudio
       delete reg.audio;
       reg.alerta = (reg.alerta ? reg.alerta + ' · ' : '') + 'Áudio não coube no celular';
-      LS.set('radio_fila', fila);
+      await filaSalvar(fila);
     }
     var hist = LS.get('radio_hist', []);
     hist.push({ quando: Date.now(), cliente: reg.cliente, valor: reg.valor });
@@ -798,13 +968,15 @@
     if (enviando) return enviando;
     enviando = (async function () {
       try {
-        for (var volta = 0; volta < 20; volta++) {
-          var fila = LS.get('radio_fila', []);
+        await filaPronta;
+        for (var volta = 0; volta < 40; volta++) {
+          var fila = filaMem;
           if (!fila.length || !cfg) return true;
-          var lote = [], peso = 0;
+          var lote = [], peso = 0, pendentes = 0;
           for (var i = 0; i < fila.length && lote.length < 20; i++) {
             var p = fila[i].audio ? fila[i].audio.b64.length : 500;
             if (lote.length && peso + p > 4000000) break;
+            if (fila[i].pendenteIA && ++pendentes > 3) break; // cada um passa pela IA no script: poucos por vez
             lote.push(fila[i]); peso += p;
           }
           var resp = await fetch(cfg.url, { method: 'POST', body: JSON.stringify({ chave: cfg.chave, registros: lote }) });
@@ -813,9 +985,9 @@
           var ok = {};
           (json.gravados || []).forEach(function (id) { ok[id] = true; });
           if (!Object.keys(ok).length) return false;
-          LS.set('radio_fila', LS.get('radio_fila', []).filter(function (r) { return !ok[r.id]; }));
+          await filaSalvar(filaMem.filter(function (r) { return !ok[r.id]; }));
         }
-        return LS.get('radio_fila', []).length === 0;
+        return filaMem.length === 0;
       } catch (e) {
         return false;
       } finally {
@@ -923,7 +1095,7 @@
   function atualizarDica() {
     var a = ajustes();
     var m = { voz: 'Aperte e responda falando.', texto: 'Aperte e responda digitando.', ambos: 'Aperte e responda falando ou digitando.',
-      ia: 'Aperte e responda falando (com áudio).' }[a.modo];
+      ia: 'Aperte e responda falando (com áudio).', frase: 'Aperte e fale tudo de uma vez.' }[a.modo];
     $('dica').textContent = m + ' Primeiro: ' + CAMPOS[a.ordem[0]].rotulo.toLowerCase() + '.';
   }
 
@@ -936,7 +1108,13 @@
     if (pedidoInstalar) { pedidoInstalar.prompt(); pedidoInstalar = null; return; }
     var a = $('ajudaBaixar'); a.style.display = a.style.display === 'block' ? 'none' : 'block';
   });
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () { /* nada */ });
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(function () { /* nada */ });
+    // guarda os arquivos desta versão para o app abrir sem internet
+    if (window.caches) caches.open('radio-app').then(function (c) {
+      return c.addAll(['./', 'index.html', 'parser.js?v=' + VERSAO, 'app.js?v=' + VERSAO, 'versao.json', 'manifest.webmanifest', 'icon-192.png']);
+    }).catch(function () { /* sem espaço ou sem rede: tenta na próxima */ });
+  }
 
   // ---------- Abrir já ouvindo ----------
   var ultimaAuto = 0;
@@ -1006,5 +1184,5 @@
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') conferirVersao(); });
 
   // Para os testes automáticos
-  window.__radio = { registrar: registrar, enviarFila: enviarFila, estado: function () { return tela; }, ajustes: ajustes };
+  window.__radio = { registrar: registrar, enviarFila: enviarFila, estado: function () { return tela; }, ajustes: ajustes, fila: function () { return filaMem; } };
 })();
