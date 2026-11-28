@@ -2,6 +2,7 @@
 
 Cada linha é uma publicação. O código completo de qualquer uma fica em https://github.com/kevinpaulor/radio-do-rosimar/commits/main (botão <> abre o projeto como estava naquele momento).
 
+- **28/11/2026 02:22 · versão 22** — Falas curtas (Cliente? Serviço? Que dia? Valor?), bip ao abrir e fechar o microfone, microfone abre logo depois da pergunta
 - **28/11/2026 02:18 · versão 21** — Voz e texto sem abrir o teclado sozinho (caixa no fim da tela); reconhecimento usa o mesmo microfone da gravação quando o Chrome permite; menos espera entre pergunta e microfone
 - **28/11/2026 02:12 · versão 20** — Versão e data/hora no rodapé, com aviso de versão nova; ferramenta nova-versao.py
 - **28/11/2026 02:08** — Microfone livre no modo voz: gravar áudio junto vira opção experimental (desligada)

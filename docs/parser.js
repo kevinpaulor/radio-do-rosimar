@@ -448,7 +448,7 @@
   }
   function horaFalada(h) {
     var p = h.split(':'), hh = +p[0], mm = +p[1];
-    return hh + (hh === 1 ? ' hora' : ' horas') + (mm === 30 ? ' e meia' : mm ? ' e ' + mm : '');
+    return hh + (mm === 30 ? ' e meia' : mm ? ' e ' + mm : '');
   }
   function dataTela(isoData) {
     var p = isoData.split('-');
@@ -458,12 +458,14 @@
   /** Frase de confirmação lida em voz alta */
   function fraseConfirmacao(r, agora) {
     var partes = [];
-    partes.push((r.clienteBase ? 'Cliente ' : 'Cliente novo, ') + r.cliente);
-    if (r.valor) partes.push(valorFalado(r.valor));
-    if (r.tipo) partes.push(r.tipo.replace('Documento/análise', 'documento ou análise').replace(' + ', ' e ').replace('Outro: ', ''));
+    partes.push((r.clienteBase ? '' : 'Novo: ') + r.cliente);
+    if (r.tipo) partes.push(r.tipo.replace('Documento/análise', 'documento').replace(' + ', ' e ').replace('Outro: ', ''));
     partes.push(dataFalada(r.dataServico, agora) + (r.hora ? ' às ' + horaFalada(r.hora) : ''));
-    if (r.situacao) partes.push(r.situacao.toLowerCase());
-    return partes.join(', ') + '. Está certo?';
+    if (r.valor) partes.push(valorFalado(r.valor));
+    if (r.situacao === 'A fazer') partes.push('agendado');
+    else if (r.situacao === 'Pago') partes.push('pago');
+    else if (r.situacao === 'A receber') partes.push('a receber');
+    return partes.join(', ') + '. Certo?';
   }
 
   var api = {

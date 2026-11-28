@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   var P = window.RadioParser;
-  var VERSAO = 21, VERSAO_DATA = '28/11/2026 02:18'; // atualizado a cada publicação
+  var VERSAO = 22, VERSAO_DATA = '28/11/2026 02:22'; // atualizado a cada publicação
   var $ = function (id) { return document.getElementById(id); };
   var LS = {
     get: function (k, padrao) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : padrao; } catch (e) { return padrao; } },
@@ -92,11 +92,32 @@
       if (vozPt) u.voice = vozPt;
       u.rate = 1.0;
       var feito = false;
-      var fim = function () { if (!feito) { feito = true; setTimeout(resolve, 120); } };
+      var fim = function () { if (!feito) { feito = true; resolve(); } };
       u.onend = fim; u.onerror = fim;
       setTimeout(fim, 1500 + texto.length * 90); // se o aparelho não avisar o fim
       speechSynthesis.speak(u);
     });
+  }
+
+  // ---------- Bip: avisa quando o microfone abre e fecha ----------
+  var ctxBip = null;
+  function bip(tipo) {
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return Promise.resolve();
+      if (!ctxBip) ctxBip = new Ctx();
+      if (ctxBip.state === 'suspended') ctxBip.resume();
+      var o = ctxBip.createOscillator(), g = ctxBip.createGain(), t = ctxBip.currentTime;
+      o.type = 'sine';
+      o.frequency.setValueAtTime(tipo === 'inicio' ? 880 : 520, t);
+      o.frequency.linearRampToValueAtTime(tipo === 'inicio' ? 1320 : 360, t + 0.09);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.25, t + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
+      o.connect(g); g.connect(ctxBip.destination);
+      o.start(t); o.stop(t + 0.12);
+    } catch (e) { /* sem som: segue */ }
+    return new Promise(function (r) { setTimeout(r, tipo === 'inicio' ? 130 : 0); });
   }
 
   // ---------- Voz: ouvir ----------
@@ -105,11 +126,11 @@
 
   // ---------- Configurações deste celular ----------
   var CAMPOS = {
-    cliente: { rotulo: 'Cliente', pergunta: 'Qual é o cliente?' },
-    servico: { rotulo: 'Serviço', pergunta: 'Qual foi o serviço?' },
-    dia: { rotulo: 'Dia', pergunta: 'Qual é o dia? Se tiver hora, fale a hora também.' },
-    valor: { rotulo: 'Valor', pergunta: 'Qual é o valor?' },
-    endereco: { rotulo: 'Endereço', pergunta: 'Qual é o endereço? Se não precisar, diga pula.' }
+    cliente: { rotulo: 'Cliente', pergunta: 'Qual é o cliente?', fala: 'Cliente?' },
+    servico: { rotulo: 'Serviço', pergunta: 'Qual foi o serviço?', fala: 'Serviço?' },
+    dia: { rotulo: 'Dia', pergunta: 'Que dia? (e a hora, se tiver)', fala: 'Que dia?' },
+    valor: { rotulo: 'Valor', pergunta: 'Qual é o valor?', fala: 'Valor?' },
+    endereco: { rotulo: 'Endereço', pergunta: 'Endereço? (ou diga “pula”)', fala: 'Endereço?' }
   };
   var ORDEM_PADRAO = ['cliente', 'servico', 'dia', 'valor', 'endereco'];
   function ajustes() {
@@ -172,7 +193,7 @@
       rec.maxAlternatives = 1;
       var final = '', parcial = '', acabou = false;
       var limite = setTimeout(function () { try { rec.stop(); } catch (e) { /* nada */ } }, opcoes.limite || 20000);
-      var fim = function (t) { if (acabou) return; acabou = true; clearTimeout(limite); mostrarCaixa(false); digitando = null; resolve(t); };
+      var fim = function (t) { if (acabou) return; acabou = true; clearTimeout(limite); mostrarCaixa(false); digitando = null; bip('fim'); resolve(t); };
       if (m === 'ambos') {
         // pode falar ou digitar: o que vier primeiro vale
         digitando = { resolve: function (t) {
@@ -201,9 +222,12 @@
         fim((final || parcial).trim());
       };
       var trilha = grav && grav.stream && grav.stream.getAudioTracks()[0];
-      var foi = false;
-      if (trilha) { try { rec.start(trilha); foi = true; grav.compartilhado = true; } catch (e) { /* Chrome antigo: não aceita */ } }
-      if (!foi) { try { rec.start(); } catch (e) { clearTimeout(limite); reject(e); } }
+      bip('inicio').then(function () {
+        if (acabou) return;
+        var foi = false;
+        if (trilha) { try { rec.start(trilha); foi = true; grav.compartilhado = true; } catch (e) { /* Chrome antigo: não aceita */ } }
+        if (!foi) { try { rec.start(); } catch (e) { clearTimeout(limite); reject(e); } }
+      });
     });
   }
   function pararDeOuvir() {
@@ -319,12 +343,12 @@
     });
   }
 
-  async function perguntarNaTela(pergunta, r, campo, ordem) {
+  async function perguntarNaTela(pergunta, r, campo, ordem, fala) {
     mostrar('ouvindo');
     $('tituloOuvindo').textContent = pergunta;
     $('parcial').textContent = '';
     desenharProgresso(r, campo, ordem);
-    await falar(pergunta);
+    await falar(fala || pergunta);
   }
   async function ouvirNaTela() {
     $('parcial').textContent = '';
@@ -374,7 +398,8 @@
         }
         var resp = '';
         for (var tentativa = 0; tentativa < 2 && !resp; tentativa++) {
-          await perguntarNaTela(tentativa ? 'Não ouvi. ' + CAMPOS[campo].pergunta : CAMPOS[campo].pergunta, r, campo, aj.ordem);
+          await perguntarNaTela(tentativa ? 'Não ouvi. ' + CAMPOS[campo].pergunta : CAMPOS[campo].pergunta, r, campo, aj.ordem,
+            tentativa ? 'De novo. ' + CAMPOS[campo].fala : CAMPOS[campo].fala);
           if (meu !== fluxo) return;
           if (!gravacaoTentada) { // grava a partir da primeira resposta (depois da pergunta, para a voz sair normal)
             gravacaoTentada = true;
@@ -399,7 +424,7 @@
           if (campo === 'cliente' && i === 0 && !r.cliente) {
             descartarGravacao();
             mostrar('inicio');
-            await falar(modo() === 'texto' ? 'Nada digitado.' : 'Não ouvi nada. Aperte o botão e fale de novo.');
+            await falar(modo() === 'texto' ? 'Nada digitado.' : 'Não ouvi. Aperte de novo.');
             return;
           }
           continue; // segue para a próxima pergunta; o que faltar aparece na confirmação
@@ -468,7 +493,7 @@
     c.appendChild(ouvi);
     mostrar('confirmar');
 
-    var frase = r.cliente ? P.fraseConfirmacao(r) : 'Não entendi o cliente. Está certo assim?';
+    var frase = r.cliente ? P.fraseConfirmacao(r) : 'Sem cliente. Certo?';
     await falar(frase);
     // Escuta "sim" ou "não" (duas tentativas). Os botões funcionam a qualquer momento.
     for (var t = 0; t < 2; t++) {
@@ -479,14 +504,14 @@
       var sn = P.simOuNao(resp);
       if (sn === 'sim') return salvar();
       if (sn === 'nao') return falarDeNovo();
-      if (t === 0 && resp) await falar(modo() === 'texto' ? 'Digite sim ou não.' : 'Diga sim ou não.');
+      if (t === 0 && resp) await falar('Sim ou não?');
     }
   }
 
   async function falarDeNovo() {
     cancelarTudo();
     atual = null;
-    await falar('Tudo bem. Fale de novo.');
+    await falar('Tá bom, de novo.');
     registrar();
   }
 
@@ -561,7 +586,7 @@
     if (meu !== fluxo) return;
     $('subGravado').textContent = enviou ? 'Já está na planilha ✓' : 'Sem internet agora. Vai enviar sozinho depois.';
     await falou;
-    if (!enviou && meu === fluxo) await falar('Sem internet agora. Eu envio depois, sozinho.');
+    if (!enviou && meu === fluxo) await falar('Sem internet. Envio depois.');
   }
 
   // Chave trocada pelo Kevin: apaga a lista de clientes e a configuração deste celular.
@@ -633,7 +658,7 @@
     } else if (msg === 'sem-internet-voz') {
       $('msgErro').textContent = 'Sem internet para entender a voz';
       $('subErro').textContent = 'O reconhecimento de voz precisa de internet. Tente de novo em um lugar com sinal.';
-      falar('Sem internet para entender a voz. Tente de novo daqui a pouco.');
+      falar('Sem internet.');
     } else if (msg === 'sem-reconhecimento') {
       $('msgErro').textContent = 'Este navegador não entende voz';
       $('subErro').textContent = 'Abra este app pelo Google Chrome.';
