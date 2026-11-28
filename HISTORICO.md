@@ -2,6 +2,7 @@
 
 Cada linha é uma publicação. O código completo de qualquer uma fica em https://github.com/kevinpaulor/radio-do-rosimar/commits/main (botão <> abre o projeto como estava naquele momento).
 
+- **28/11/2026 09:44 · versão 26** — "Uma frase + IA" é o modo padrão (para quem ainda não escolheu outro nas configurações)
 - **28/11/2026 08:15 · versão 25** — Modo "Uma frase + IA" (fala tudo de uma vez, a IA separa os campos, pergunta só o que faltou); sem internet qualquer modo de voz grava e o script preenche depois; app abre sem internet; fila no IndexedDB
 - **28/11/2026 02:34 · versão 24** — Modo "Voz com áudio (IA)": grava cada resposta em WAV, a IA (Gemini, pelo script) transcreve e o app preenche; áudio sempre salvo; detecção de fim de fala
 - **28/11/2026 02:25 · versão 23** — Bip mais alto (dois toques ao abrir o microfone, um ao fechar)

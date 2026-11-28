@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   var P = window.RadioParser;
-  var VERSAO = 25, VERSAO_DATA = '28/11/2026 08:15'; // atualizado a cada publicação
+  var VERSAO = 26, VERSAO_DATA = '28/11/2026 09:44'; // atualizado a cada publicação
   var $ = function (id) { return document.getElementById(id); };
   var LS = {
     get: function (k, padrao) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : padrao; } catch (e) { return padrao; } },
@@ -181,7 +181,7 @@
     var ordem = Array.isArray(a.ordem) ? a.ordem.filter(function (c) { return CAMPOS[c]; }) : [];
     ORDEM_PADRAO.forEach(function (c) { if (ordem.indexOf(c) < 0) ordem.push(c); });
     return {
-      modo: ['voz', 'texto', 'ambos', 'ia', 'frase'].indexOf(a.modo) >= 0 ? a.modo : (teste ? 'ambos' : 'voz'),
+      modo: ['voz', 'texto', 'ambos', 'ia', 'frase'].indexOf(a.modo) >= 0 ? a.modo : 'frase', // padrão: fala tudo de uma vez
       ordem: ordem,
       endereco: ['sempre', 'novo', 'nunca'].indexOf(a.endereco) >= 0 ? a.endereco : 'novo',
       gravarJunto: a.gravarJunto === true // experimental: no Android pode ocupar o microfone e o reconhecimento não ouve
