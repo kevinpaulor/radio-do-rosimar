@@ -1,6 +1,6 @@
 # Histórico de versões — Rádio do Rosimar
 
-Cada linha é uma publicação. O código completo de qualquer uma fica em https://github.com/kevinpaulor/radio-do-rosimar/commits/main (botão <> abre o projeto como estava naquele momento). A partir da versão 20, cada publicação também tem uma etiqueta (tag) vN.
+Cada linha é uma publicação. O código completo de qualquer uma fica em https://github.com/kevinpaulor/radio-do-rosimar/commits/main (botão <> abre o projeto como estava naquele momento).
 
 - **28/11/2026 02:12 · versão 20** — Versão e data/hora no rodapé, com aviso de versão nova; ferramenta nova-versao.py
 - **28/11/2026 02:08** — Microfone livre no modo voz: gravar áudio junto vira opção experimental (desligada)
